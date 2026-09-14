@@ -1,4 +1,5 @@
 .worktrees/
+*.tsbuildinfo
 node_modules/
 dist/
 data/*.json
