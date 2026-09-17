@@ -38,7 +38,6 @@ import {
   Pencil,
   Plus,
   RefreshCcw,
-  RotateCcw,
   Search,
   Send,
   Sparkles,
@@ -575,7 +574,6 @@ function TarotFan({
   selected,
   onBack,
   onSelect,
-  onUndo,
   onFinish,
   loading,
   error,
@@ -585,13 +583,13 @@ function TarotFan({
   selected: number[];
   onBack: () => void;
   onSelect: (index: number) => void;
-  onUndo: () => void;
   onFinish: () => void;
   loading: boolean;
   error: string;
 }) {
   const visibleCount = Math.min(21, total);
-  const [center, setCenter] = useState(Math.floor(visibleCount / 2));
+  const [center, setCenter] = useState(Math.floor((total - 1) / 2));
+  const [dragging, setDragging] = useState(false);
   const [width, setWidth] = useState(390);
   const stageRef = useRef<HTMLDivElement>(null);
   const centerRef = useRef(center);
@@ -616,13 +614,18 @@ function TarotFan({
     return () => observer.disconnect();
   }, []);
 
-  const moveCenter = (value: number) => {
-    const next = clampFanCenter(value, total, visibleCount);
+  const moveCenter = (value: number, elastic = false) => {
+    let next = clampFanCenter(value, total);
+    if (elastic && value < 0) next = Math.max(-2.4, value * 0.18);
+    if (elastic && value > total - 1) {
+      next = total - 1 + Math.min(2.4, (value - (total - 1)) * 0.18);
+    }
     centerRef.current = next;
     setCenter(next);
   };
   const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     event.currentTarget.setPointerCapture(event.pointerId);
+    setDragging(true);
     dragRef.current = {
       active: true,
       startX: event.clientX,
@@ -636,7 +639,7 @@ function TarotFan({
     if (Math.abs(delta) > 30) dragRef.current.moved = true;
     if (Math.abs(delta) > 8) {
       const effectiveDelta = delta - Math.sign(delta) * 8;
-      moveCenter(dragRef.current.startCenter - effectiveDelta / 23);
+      moveCenter(dragRef.current.startCenter - effectiveDelta / 26, true);
     }
   };
   const handlePointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
@@ -645,14 +648,17 @@ function TarotFan({
     }
     suppressClick.current = dragRef.current.moved;
     dragRef.current.active = false;
-    moveCenter(Math.round(centerRef.current));
+    setDragging(false);
+    moveCenter(Math.round(clampFanCenter(centerRef.current, total)));
   };
 
   return (
     <section className="fan-page">
       <PageHeader title="亲手抽取你的牌" onBack={onBack} />
       <div className="fan-copy">
-        <p className="eyebrow">THE DECK IS SET</p>
+        <p className="fan-intro">
+          牌已洗好，每张牌的位置都已固定。现在，请亲手抽取。
+        </p>
         <h1>
           {selected.length < required
             ? `抽取第 ${selected.length + 1} 张牌`
@@ -670,11 +676,15 @@ function TarotFan({
           ))}
         </div>
       </div>
-      <div ref={stageRef} className="fan-stage" aria-label="可左右拖动的塔罗牌阵">
+      <div
+        ref={stageRef}
+        className={`fan-stage ${dragging ? 'is-dragging' : 'is-settling'}`}
+        aria-label="可左右拖动的塔罗牌阵"
+      >
         {indexes.map((deckIndex, slot) => {
           const transform = fanCardTransform(
-            slot,
-            Math.floor(indexes.length / 2),
+            deckIndex,
+            center,
             width,
           );
           const chosenAt = selected.indexOf(deckIndex);
@@ -689,7 +699,7 @@ function TarotFan({
                   '--fan-x': `${transform.x}px`,
                   '--fan-y': `${transform.y}px`,
                   '--fan-rotation': `${transform.rotation}deg`,
-                  zIndex: chosen ? 80 + chosenAt : 40 - Math.abs(slot - 10),
+                  zIndex: chosen ? 100 + chosenAt : 20 + slot,
                 } as CSSProperties
               }
               aria-label={
@@ -711,7 +721,7 @@ function TarotFan({
                   suppressClick.current = false;
                   return;
                 }
-                if (!chosen && selected.length < required) onSelect(deckIndex);
+                if (chosen || selected.length < required) onSelect(deckIndex);
               }}
             >
               <span>{chosen ? chosenAt + 1 : '✦'}</span>
@@ -729,15 +739,7 @@ function TarotFan({
             : '牌面已经固定，只等你的选择'}
         </p>
         {error && <p className="ritual-error">{error}</p>}
-        <div className="fan-actions">
-          <Button
-            variant="ghost"
-            disabled={!selected.length || loading}
-            onClick={onUndo}
-          >
-            <RotateCcw />
-            撤回上一张
-          </Button>
+        <div className="fan-actions fan-actions--single">
           <Button
             className="gold-button h-12"
             disabled={selected.length !== required || loading}
@@ -1097,7 +1099,26 @@ export default function Home() {
           onBack={goFeed}
         />
         <div className="mx-auto max-w-4xl px-4 pb-36 pt-7 sm:px-6">
-          <div className="flex items-center justify-between">
+          <h2 className="section-title">这次真正想看清什么？</h2>
+          <Textarea
+            id="first-question"
+            aria-label="这次真正想看清什么？"
+            value={question}
+            maxLength={160}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder={
+              selectedSpread?.id === 'two-choice'
+                ? '请明确写出：A 代表哪个选择，B 代表哪个选择。'
+                : '例如：未来三个月，我和对方的关系会怎样发展？'
+            }
+            className="form-control mt-4 min-h-24"
+          />
+          {selectedSpread?.id === 'two-choice' && (
+            <p className="mt-2 text-sm leading-6 text-[#b99a63]">
+              请在问题中说清楚 A 和 B 分别代表哪个选择，例如：“A 留在现在的岗位，B 接受新工作，我该如何选择？”
+            </p>
+          )}
+          <div className="mt-8 flex items-center justify-between">
             <h2 className="section-title">选择牌阵</h2>
             <Badge
               variant="outline"
@@ -1185,20 +1206,6 @@ export default function Home() {
               ))}
             </div>
           </div>
-          <div className="mt-9 border-t border-white/8 pt-7">
-            <h3 className="font-serif text-xl text-[#eee4d2]">
-              这次真正想看清什么？
-            </h3>
-            <Textarea
-              id="first-question"
-              aria-label="这次真正想看清什么？"
-              value={question}
-              maxLength={160}
-              onChange={(event) => setQuestion(event.target.value)}
-              placeholder="例如：未来三个月，我和对方的关系会怎样发展？"
-              className="form-control mt-4 min-h-24"
-            />
-          </div>
           {error && <p className="mt-4 text-sm text-[#dc9a90]">{error}</p>}
         </div>
         <div className="bottom-bar">
@@ -1248,8 +1255,13 @@ export default function Home() {
         required={selectedSpread.positions.length}
         selected={fanSelected}
         onBack={() => setView('breathe')}
-        onSelect={(index) => setFanSelected((items) => [...items, index])}
-        onUndo={() => setFanSelected((items) => items.slice(0, -1))}
+        onSelect={(index) =>
+          setFanSelected((items) =>
+            items.includes(index)
+              ? items.filter((item) => item !== index)
+              : [...items, index],
+          )
+        }
         onFinish={finalizeFanSelection}
         loading={loading}
         error={error}

@@ -1,16 +1,16 @@
 export type FanCardTransform = { x: number; y: number; rotation: number };
 
-export function clampFanCenter(center: number, total: number, visibleCount = 21) {
-  const half = Math.floor(Math.min(visibleCount, total) / 2);
-  return Math.min(Math.max(center, half), Math.max(half, total - half - 1));
+export function clampFanCenter(center: number, total: number) {
+  return Math.min(Math.max(center, 0), Math.max(0, total - 1));
 }
 
 export function visibleFanIndexes(total: number, center: number, visibleCount = 21) {
   const count = Math.min(visibleCount, total);
   const half = Math.floor(count / 2);
-  const safeCenter = Math.round(clampFanCenter(center, total, count));
-  const start = Math.max(0, Math.min(safeCenter - half, total - count));
-  return Array.from({ length: count }, (_, index) => start + index);
+  const safeCenter = Math.round(clampFanCenter(center, total));
+  const start = Math.max(0, safeCenter - half);
+  const end = Math.min(total - 1, safeCenter + half);
+  return Array.from({ length: end - start + 1 }, (_, index) => start + index);
 }
 
 export function fanCardTransform(
@@ -19,10 +19,10 @@ export function fanCardTransform(
   viewportWidth: number,
 ): FanCardTransform {
   const relative = slot - centerSlot;
-  const step = Math.max(18, Math.min(34, viewportWidth / 15));
+  const step = Math.max(22, Math.min(38, viewportWidth / 13));
   return {
     x: Math.round(relative * step),
-    y: Math.round(relative * relative * Math.max(0.8, viewportWidth / 560)),
-    rotation: Number((relative * 2.65).toFixed(2)),
+    y: 0,
+    rotation: 0,
   };
 }

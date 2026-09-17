@@ -3,13 +3,13 @@ import { clampFanCenter, fanCardTransform, visibleFanIndexes } from './fan';
 
 describe('tarot fan geometry', () => {
   it('keeps a 21-card viewport within the 78-card deck', () => {
-    expect(clampFanCenter(-50, 78, 21)).toBe(10);
-    expect(clampFanCenter(200, 78, 21)).toBe(67);
-    expect(visibleFanIndexes(78, 10, 21)).toEqual(
-      Array.from({ length: 21 }, (_, index) => index),
+    expect(clampFanCenter(-50, 78)).toBe(0);
+    expect(clampFanCenter(200, 78)).toBe(77);
+    expect(visibleFanIndexes(78, 0, 21)).toEqual(
+      Array.from({ length: 11 }, (_, index) => index),
     );
-    expect(visibleFanIndexes(78, 67, 21)).toEqual(
-      Array.from({ length: 21 }, (_, index) => index + 57),
+    expect(visibleFanIndexes(78, 77, 21)).toEqual(
+      Array.from({ length: 11 }, (_, index) => index + 67),
     );
   });
 
