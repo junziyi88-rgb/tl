@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import type { AiInterpretation, CustomSpread, DrawMode, DrawnCard, Reading, SpreadDefinition } from '@/lib/tarot';
+import type { AiInterpretation, CustomSpread, DeckCard, DrawMode, DrawnCard, Reading, SpreadDefinition } from '@/lib/tarot';
 
 type ReadingInput = {
   memberId: string;
@@ -46,9 +46,9 @@ function parseReading(row: Record<string, unknown>): Reading {
     id: String(row.id), memberId: String(row.member_id), authorName: String(row.author_name),
     question: String(row.question), mode: row.mode as DrawMode,
     spread: storedSpread?.positions?.length ? storedSpread : legacySpread(String(row.spread), cards),
-    cards, interpretation: String(row.interpretation ?? ''),
+    cards, interpretation: typeof row.interpretation === 'string' ? row.interpretation : '',
     aiInterpretation: row.ai_interpretation ? parseJson<AiInterpretation | null>(row.ai_interpretation, null) : null,
-    tags: parseJson<string[]>(row.tags, []), feedback: String(row.feedback ?? ''),
+    tags: parseJson<string[]>(row.tags, []), feedback: typeof row.feedback === 'string' ? row.feedback : '',
     createdAt: Number(row.created_at), updatedAt: Number(row.updated_at),
   };
 }
@@ -124,11 +124,65 @@ export async function removeCustomSpread(id: string, memberId: string) {
   return result.meta.changes > 0;
 }
 
+export async function createDrawSession(memberId: string, input: { question: string; spread: SpreadDefinition; deck: DeckCard[] }) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO draw_sessions (id, member_id, question, spread, deck, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(id, memberId, input.question, JSON.stringify(input.spread), JSON.stringify(input.deck), Date.now()).run();
+  return id;
+}
+
+export async function getDrawSession(id: string, memberId: string) {
+  const row = await env.DB.prepare('SELECT question, spread, deck FROM draw_sessions WHERE id = ? AND member_id = ?')
+    .bind(id, memberId).first<Record<string, unknown>>();
+  if (!row) return null;
+  return {
+    question: String(row.question),
+    spread: parseJson<SpreadDefinition>(row.spread, { id: '', name: '', positions: [] }),
+    deck: parseJson<DeckCard[]>(row.deck, []),
+  };
+}
+
 export async function reserveAiGeneration(memberId: string, draftId: string) {
+  const dayStart = new Date();
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const [memberUsage, globalUsage] = await Promise.all([
+    env.DB.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM ai_generations WHERE member_id = ? AND created_at >= ?').bind(memberId, dayStart.getTime()).first<{ total: number }>(),
+    env.DB.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM ai_generations WHERE created_at >= ?').bind(dayStart.getTime()).first<{ total: number }>(),
+  ]);
+  if (Number(memberUsage?.total ?? 0) >= 12 || Number(globalUsage?.total ?? 0) >= 60) return false;
   const id = `${memberId}:${draftId}`;
   const result = await env.DB.prepare(`
     INSERT INTO ai_generations (id, draft_id, member_id, count, created_at) VALUES (?, ?, ?, 1, ?)
     ON CONFLICT(draft_id, member_id) DO UPDATE SET count = count + 1 WHERE count < 3
   `).bind(id, draftId, memberId, Date.now()).run();
   return result.meta.changes > 0;
+}
+
+export async function releaseAiGeneration(memberId: string, draftId: string) {
+  await env.DB.prepare('UPDATE ai_generations SET count = MAX(0, count - 1) WHERE draft_id = ? AND member_id = ?').bind(draftId, memberId).run();
+}
+
+export async function createAiDraft(memberId: string, input: { question: string; spread: SpreadDefinition; cards: DrawnCard[] }, requestedId?: string) {
+  const id = requestedId ?? crypto.randomUUID();
+  await env.DB.prepare('INSERT OR IGNORE INTO ai_drafts (id, member_id, question, spread, cards, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(id, memberId, input.question, JSON.stringify(input.spread), JSON.stringify(input.cards), Date.now()).run();
+  return id;
+}
+
+export async function getAiDraft(id: string, memberId: string) {
+  const row = await env.DB.prepare('SELECT question, spread, cards FROM ai_drafts WHERE id = ? AND member_id = ?').bind(id, memberId).first<Record<string, unknown>>();
+  if (!row) return null;
+  return { question: String(row.question), spread: parseJson<SpreadDefinition>(row.spread, { id: '', name: '', positions: [] }), cards: parseJson<DrawnCard[]>(row.cards, []) };
+}
+
+export async function insertAiVersion(draftId: string, memberId: string, interpretation: AiInterpretation) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare('INSERT INTO ai_versions (id, draft_id, member_id, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .bind(id, draftId, memberId, JSON.stringify(interpretation), Date.now()).run();
+  return id;
+}
+
+export async function getAiVersion(id: string, draftId: string, memberId: string) {
+  const row = await env.DB.prepare('SELECT content FROM ai_versions WHERE id = ? AND draft_id = ? AND member_id = ?').bind(id, draftId, memberId).first<{ content: string }>();
+  return row ? parseJson<AiInterpretation | null>(row.content, null) : null;
 }

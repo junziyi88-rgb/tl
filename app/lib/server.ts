@@ -4,6 +4,7 @@ import {
   isMode,
   validateSpread,
   type AiInterpretation,
+  type DeckCard,
   type DrawMode,
   type DrawnCard,
   type SpreadDefinition,
@@ -22,16 +23,43 @@ export function secureRandomIndex(max: number) {
 }
 
 export function drawCards(spread: SpreadDefinition): DrawnCard[] {
-  const pool = CARDS.map((card) => card.id);
-  return spread.positions.map((position) => {
-    const index = secureRandomIndex(pool.length);
-    return {
-      cardId: pool.splice(index, 1)[0],
-      positionId: position.id,
-      position: position.question,
-      orientation: secureRandomIndex(2) === 0 ? 'upright' : 'reversed',
-    };
-  });
+  const selected = selectCardsFromDeck(createDeck(), spread, spread.positions.map((_, index) => index));
+  return selected.ok ? selected.value : [];
+}
+
+export function createDeck(): DeckCard[] {
+  const deck = CARDS.map((card) => ({
+    cardId: card.id,
+    orientation: secureRandomIndex(2) === 0 ? 'upright' as const : 'reversed' as const,
+  }));
+  for (let index = deck.length - 1; index > 0; index -= 1) {
+    const swapIndex = secureRandomIndex(index + 1);
+    [deck[index], deck[swapIndex]] = [deck[swapIndex], deck[index]];
+  }
+  return deck;
+}
+
+export function selectCardsFromDeck(
+  deck: DeckCard[],
+  spread: SpreadDefinition,
+  selectedIndices: number[],
+): { ok: true; value: DrawnCard[] } | { ok: false; error: string } {
+  if (deck.length !== CARDS.length || new Set(deck.map((card) => card.cardId)).size !== CARDS.length) {
+    return { ok: false, error: '牌堆数据无效，请重新洗牌' };
+  }
+  if (selectedIndices.length !== spread.positions.length) return { ok: false, error: '请选择正确数量的牌' };
+  if (new Set(selectedIndices).size !== selectedIndices.length) return { ok: false, error: '同一张牌不能重复抽取' };
+  if (selectedIndices.some((index) => !Number.isInteger(index) || index < 0 || index >= deck.length)) {
+    return { ok: false, error: '选择的牌位无效' };
+  }
+  return {
+    ok: true,
+    value: selectedIndices.map((deckIndex, index) => ({
+      ...deck[deckIndex],
+      positionId: spread.positions[index].id,
+      position: spread.positions[index].question,
+    })),
+  };
 }
 
 export function validateDrawRequest(input: Record<string, unknown>) {
@@ -78,6 +106,6 @@ export function validateReading(input: Record<string, unknown>): ValidationResul
   }
   const tags = Array.isArray(input.tags) ? input.tags.filter((tag): tag is string => typeof tag === 'string').map((tag) => tag.trim()).filter(Boolean).slice(0, 3) : [];
   if (tags.some((tag) => tag.length > 16)) return { ok: false, error: '每个标签最多 16 个字' };
-  const aiInterpretation = input.aiInterpretation && typeof input.aiInterpretation === 'object' ? input.aiInterpretation as AiInterpretation : null;
+  const aiInterpretation: AiInterpretation | null = null;
   return { ok: true, value: { question, interpretation, idempotencyKey, mode: input.mode, spread: spreadResult.value, cards, tags, aiInterpretation } };
 }

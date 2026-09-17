@@ -36,10 +36,10 @@ export function parseAiInterpretation(raw: string, expectedPositionIds: string[]
   const actualIds = value.cards.map((card) => String(card?.positionId || ''));
   if (new Set(actualIds).size !== actualIds.length || expectedPositionIds.some((id) => !actualIds.includes(id))) throw new Error('AI_FORMAT');
   const cards = value.cards.map((card) => ({ positionId: String(card.positionId), text: String(card.text || '').trim() }));
-  if (cards.some((card) => card.text.length < 60 || card.text.length > 260)) throw new Error('AI_LENGTH');
+  if (cards.some((card) => card.text.length < 100 || card.text.length > 200)) throw new Error('AI_LENGTH');
   const synthesis = String(value.synthesis || '').trim();
   const advice = String(value.advice || '').trim();
-  if (!synthesis || synthesis.length > 320 || !advice || advice.length > 160) throw new Error('AI_FORMAT');
+  if (synthesis.length < 80 || synthesis.length > 240 || advice.length < 30 || advice.length > 120) throw new Error('AI_FORMAT');
   return { cards, synthesis, advice, disclaimer: '仅供娱乐与自我反思。' };
 }
 

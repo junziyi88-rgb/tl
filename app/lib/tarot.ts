@@ -5,6 +5,7 @@ export type TarotCardDefinition = { id: string; nameZh: string; nameEn: string; 
 export type CardMeaning = { upright: string; reversed: string };
 export type SpreadPosition = { id: string; question: string };
 export type SpreadDefinition = { id: string; name: string; positions: SpreadPosition[]; isCustom?: boolean };
+export type DeckCard = { cardId: string; orientation: Orientation };
 export type DrawnCard = { cardId: string; orientation: Orientation; positionId: string; position: string };
 export type AiCardInterpretation = { positionId: string; text: string };
 export type AiInterpretation = { cards: AiCardInterpretation[]; synthesis: string; advice: string; disclaimer: string };

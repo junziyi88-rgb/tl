@@ -6,7 +6,7 @@ import {
   normalizeSpread,
   validateSpread,
 } from './tarot';
-import { validateDrawRequest, validateReading } from './server';
+import { createDeck, selectCardsFromDeck, validateDrawRequest, validateReading } from './server';
 
 describe('tarot catalog and spreads', () => {
   it('contains the complete deck, meanings, and exactly the nine approved spreads', () => {
@@ -46,5 +46,27 @@ describe('tarot catalog and spreads', () => {
       question: '对方现在如何看我？', mode: 'online', spread, cards,
       interpretation: '', aiInterpretation: null, tags: [], idempotencyKey: 'draft-1',
     }).ok).toBe(true);
+  });
+
+  it('fixes a complete unique deck before mapping clicked positions to spread positions', () => {
+    const deck = createDeck();
+    expect(deck).toHaveLength(78);
+    expect(new Set(deck.map((card) => card.cardId)).size).toBe(78);
+    expect(deck.every((card) => ['upright', 'reversed'].includes(card.orientation))).toBe(true);
+
+    const spread = BUILT_IN_SPREADS[3];
+    const selected = selectCardsFromDeck(deck, spread, [17, 2, 66]);
+    expect(selected.ok).toBe(true);
+    if (!selected.ok) return;
+    expect(selected.value.map((card) => card.cardId)).toEqual([deck[17].cardId, deck[2].cardId, deck[66].cardId]);
+    expect(selected.value.map((card) => card.positionId)).toEqual(spread.positions.map((position) => position.id));
+  });
+
+  it('rejects duplicate, out-of-range, and wrong-count deck selections', () => {
+    const deck = createDeck();
+    const spread = BUILT_IN_SPREADS[3];
+    expect(selectCardsFromDeck(deck, spread, [1, 1, 2]).ok).toBe(false);
+    expect(selectCardsFromDeck(deck, spread, [1, 2]).ok).toBe(false);
+    expect(selectCardsFromDeck(deck, spread, [1, 2, 78]).ok).toBe(false);
   });
 });

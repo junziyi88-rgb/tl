@@ -1,4 +1,4 @@
-import { insertReading, listReadings, verifyMember } from '@/db/queries';
+import { getAiVersion, insertReading, listReadings, verifyMember } from '@/db/queries';
 import { bearerToken, jsonError, validateReading } from '@/lib/server';
 
 export async function GET() {
@@ -13,6 +13,9 @@ export async function POST(request: Request) {
   }
   const result = validateReading(body);
   if (!result.ok) return jsonError(result.error);
-  const reading = await insertReading({ memberId, ...result.value });
+  const aiVersionId = typeof body.aiVersionId === 'string' ? body.aiVersionId : '';
+  const aiInterpretation = aiVersionId ? await getAiVersion(aiVersionId, result.value.idempotencyKey, memberId) : null;
+  if (aiVersionId && !aiInterpretation) return jsonError('采用的 AI 解读版本无效');
+  const reading = await insertReading({ memberId, ...result.value, aiInterpretation });
   return Response.json(reading, { status: 201 });
 }

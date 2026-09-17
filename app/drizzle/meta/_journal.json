@@ -15,6 +15,13 @@
       "when": 1789385021739,
       "tag": "0001_good_doctor_octopus",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789555592141,
+      "tag": "0002_chunky_doctor_spectrum",
+      "breakpoints": true
     }
   ]
 }

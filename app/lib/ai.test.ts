@@ -20,9 +20,9 @@ describe('AI interpretation contract', () => {
 
   it('accepts bounded JSON and rejects missing card interpretations', () => {
     const parsed = parseAiInterpretation(JSON.stringify({
-      cards: [{ positionId: 'p1', text: '这张牌提示你先观察现状，再确认自己的真实需求。'.repeat(4) }],
-      synthesis: '关系仍有沟通空间，但需要以事实而不是猜测为依据。',
-      advice: '先进行一次坦诚而具体的沟通。',
+      cards: [{ positionId: 'p1', text: '这张牌提示你先观察现状，再确认自己的真实需求。'.repeat(5) }],
+      synthesis: '关系仍有沟通空间，但需要以事实而不是猜测为依据。'.repeat(4),
+      advice: '先进行一次坦诚而具体的沟通。'.repeat(3),
       disclaimer: '仅供娱乐与自我反思。',
     }), ['p1']);
     expect(parsed.cards).toHaveLength(1);
