@@ -25,7 +25,7 @@ export async function PATCH(request: Request, context: Context) {
     changes.interpretation = body.interpretation.trim();
   }
   if ('feedback' in body) {
-    if (typeof body.feedback !== 'string' || body.feedback.length > 200 || /[\r\n]/.test(body.feedback)) return jsonError('真实反馈需要是一行 200 字以内的文字');
+    if (typeof body.feedback !== 'string' || body.feedback.length > 200 || /[\r\n]/.test(body.feedback)) return jsonError('后续反馈需要是一行 200 字以内的文字');
     changes.feedback = body.feedback.trim();
   }
   if ('tags' in body) {
