@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { clampFanCenter, fanCardTransform, visibleFanIndexes } from './fan';
+import {
+  clampFanCenter,
+  fanCardTransform,
+  fanCenterFromDrag,
+  visibleFanIndexes,
+} from './fan';
 
 describe('tarot fan geometry', () => {
   it('keeps a 21-card viewport within the 78-card deck', () => {
@@ -21,6 +26,14 @@ describe('tarot fan geometry', () => {
     expect(middle).toEqual({ x: 0, y: 0, rotation: 0 });
     expect(left.x).toBe(-right.x);
     expect(left.y).toBe(right.y);
+    expect(left.y).toBeGreaterThan(0);
     expect(left.rotation).toBe(-right.rotation);
+    expect(left.rotation).toBeLessThan(0);
+  });
+
+  it('maps a short drag to immediate fan movement', () => {
+    expect(fanCenterFromDrag(38, 48)).toBe(35);
+    expect(fanCenterFromDrag(38, -48)).toBe(41);
+    expect(fanCenterFromDrag(38, 8)).toBe(37.5);
   });
 });

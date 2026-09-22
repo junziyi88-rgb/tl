@@ -72,6 +72,7 @@ import {
 import {
   clampFanCenter,
   fanCardTransform,
+  fanCenterFromDrag,
   visibleFanIndexes,
 } from '@/lib/fan';
 
@@ -637,10 +638,7 @@ function TarotFan({
     if (!dragRef.current.active) return;
     const delta = event.clientX - dragRef.current.startX;
     if (Math.abs(delta) > 30) dragRef.current.moved = true;
-    if (Math.abs(delta) > 8) {
-      const effectiveDelta = delta - Math.sign(delta) * 8;
-      moveCenter(dragRef.current.startCenter - effectiveDelta / 26, true);
-    }
+    moveCenter(fanCenterFromDrag(dragRef.current.startCenter, delta), true);
   };
   const handlePointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {

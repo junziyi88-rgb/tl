@@ -19,10 +19,19 @@ export function fanCardTransform(
   viewportWidth: number,
 ): FanCardTransform {
   const relative = slot - centerSlot;
-  const step = Math.max(22, Math.min(38, viewportWidth / 13));
+  const step = Math.max(20, Math.min(34, viewportWidth / 14));
+  const arc = Math.max(0.62, Math.min(1, viewportWidth / 520));
   return {
     x: Math.round(relative * step),
-    y: 0,
-    rotation: 0,
+    y: Math.round(relative * relative * arc),
+    rotation: Number((relative * 2.8).toFixed(2)),
   };
+}
+
+export function fanCenterFromDrag(
+  startCenter: number,
+  deltaX: number,
+  pixelsPerCard = 16,
+) {
+  return startCenter - deltaX / Math.max(1, pixelsPerCard);
 }
