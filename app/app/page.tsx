@@ -7,6 +7,7 @@ import {
   useState,
   type CSSProperties,
   type PointerEvent,
+  type WheelEvent,
 } from 'react';
 import {
   createDeck,
@@ -70,9 +71,15 @@ import {
   type SpreadDefinition,
 } from '@/lib/tarot';
 import {
+  FAN_DRAG_THRESHOLD_PX,
+  FAN_PIXELS_PER_CARD,
   clampFanCenter,
   fanCardTransform,
   fanCenterFromDrag,
+  fanInertiaTarget,
+  fanWheelDelta,
+  recentFanVelocity,
+  type FanPointerSample,
   visibleFanIndexes,
 } from '@/lib/fan';
 
@@ -594,13 +601,23 @@ function TarotFan({
   const [width, setWidth] = useState(390);
   const stageRef = useRef<HTMLDivElement>(null);
   const centerRef = useRef(center);
-  const dragRef = useRef({
+  const dragRef = useRef<{
+    active: boolean;
+    pointerId: number | null;
+    startX: number;
+    startCenter: number;
+    moved: boolean;
+    samples: FanPointerSample[];
+  }>({
     active: false,
+    pointerId: null,
     startX: 0,
     startCenter: center,
     moved: false,
+    samples: [],
   });
   const suppressClick = useRef(false);
+  const wheelEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const indexes = useMemo(
     () => visibleFanIndexes(total, center, visibleCount),
     [center, total, visibleCount],
@@ -612,7 +629,10 @@ function TarotFan({
     update();
     const observer = new ResizeObserver(update);
     observer.observe(stageRef.current);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
+    };
   }, []);
 
   const moveCenter = (value: number, elastic = false) => {
@@ -624,30 +644,85 @@ function TarotFan({
     centerRef.current = next;
     setCenter(next);
   };
-  const handlePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
-    event.currentTarget.setPointerCapture(event.pointerId);
+
+  const addPointerSample = (x: number, time: number) => {
+    dragRef.current.samples = [
+      ...dragRef.current.samples.filter((sample) => sample.time >= time - 100),
+      { x, time },
+    ];
+  };
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    if (dragRef.current.active) return;
+    if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
+    suppressClick.current = false;
     setDragging(true);
     dragRef.current = {
       active: true,
+      pointerId: event.pointerId,
       startX: event.clientX,
-      startCenter: center,
+      startCenter: centerRef.current,
       moved: false,
+      samples: [{ x: event.clientX, time: event.timeStamp }],
     };
   };
-  const handlePointerMove = (event: PointerEvent<HTMLButtonElement>) => {
-    if (!dragRef.current.active) return;
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (
+      !dragRef.current.active ||
+      dragRef.current.pointerId !== event.pointerId
+    )
+      return;
     const delta = event.clientX - dragRef.current.startX;
-    if (Math.abs(delta) > 30) dragRef.current.moved = true;
+    addPointerSample(event.clientX, event.timeStamp);
+    if (Math.abs(delta) >= FAN_DRAG_THRESHOLD_PX) {
+      dragRef.current.moved = true;
+      if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }
+    }
     moveCenter(fanCenterFromDrag(dragRef.current.startCenter, delta), true);
   };
-  const handlePointerEnd = (event: PointerEvent<HTMLButtonElement>) => {
+  const finishPointer = (
+    event: PointerEvent<HTMLDivElement>,
+    useInertia: boolean,
+  ) => {
+    if (
+      !dragRef.current.active ||
+      dragRef.current.pointerId !== event.pointerId
+    )
+      return;
+    addPointerSample(event.clientX, event.timeStamp);
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
     suppressClick.current = dragRef.current.moved;
+    const velocity = recentFanVelocity(dragRef.current.samples);
+    const currentCenter = clampFanCenter(centerRef.current, total);
+    const target =
+      useInertia && dragRef.current.moved
+        ? fanInertiaTarget(currentCenter, velocity, total)
+        : Math.round(currentCenter);
     dragRef.current.active = false;
+    dragRef.current.pointerId = null;
     setDragging(false);
-    moveCenter(Math.round(clampFanCenter(centerRef.current, total)));
+    moveCenter(target);
+  };
+  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
+    const delta = fanWheelDelta(event.deltaX, event.deltaY, event.shiftKey);
+    if (!delta || dragRef.current.active) return;
+    event.preventDefault();
+    const limitedDelta = Math.max(-42, Math.min(42, delta));
+    setDragging(true);
+    moveCenter(
+      centerRef.current + limitedDelta / FAN_PIXELS_PER_CARD,
+      true,
+    );
+    if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
+    wheelEndTimer.current = setTimeout(() => {
+      setDragging(false);
+      moveCenter(Math.round(clampFanCenter(centerRef.current, total)));
+      wheelEndTimer.current = null;
+    }, 90);
   };
 
   return (
@@ -678,6 +753,11 @@ function TarotFan({
         ref={stageRef}
         className={`fan-stage ${dragging ? 'is-dragging' : 'is-settling'}`}
         aria-label="可左右拖动的塔罗牌阵"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={(event) => finishPointer(event, true)}
+        onPointerCancel={(event) => finishPointer(event, false)}
+        onWheel={handleWheel}
       >
         {indexes.map((deckIndex, slot) => {
           const transform = fanCardTransform(
@@ -710,10 +790,6 @@ function TarotFan({
                 if (event.key === 'ArrowLeft') moveCenter(center - 2);
                 if (event.key === 'ArrowRight') moveCenter(center + 2);
               }}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerEnd}
-              onPointerCancel={handlePointerEnd}
               onClick={() => {
                 if (suppressClick.current) {
                   suppressClick.current = false;
