@@ -2,6 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const page = readFileSync(new URL('../app/page.tsx', import.meta.url), 'utf8');
+const styles = readFileSync(
+  new URL('../app/globals.css', import.meta.url),
+  'utf8',
+);
 
 describe('concise product copy', () => {
   it('uses the requested draw mode names', () => {
@@ -39,8 +43,32 @@ describe('concise product copy', () => {
     expect(page).toContain('后续反馈');
   });
 
+  it('waits for the explicit AI button before requesting interpretation', () => {
+    expect(page).not.toContain('const openCompose = () =>');
+    expect(page).not.toContain("if (mode === 'online') void generateAi();");
+    expect(page.match(/onClick=\{\(\) => setView\('compose'\)\}/g)).toHaveLength(2);
+    expect(page).toContain('onClick={() => void generateAi()}');
+  });
+
   it('renders text-only card summaries in the feed', () => {
     expect(page).toContain('FeedCardNames');
     expect(page).toMatch(/【\s*\{card\.orientation === 'reversed' \? '逆位' : '正位'\}】/);
+  });
+});
+
+describe('stable tarot fan renderer', () => {
+  it('uses a fixed slot pool and frame-based motion', () => {
+    expect(page).toContain('FAN_POOL_SIZE');
+    expect(page).toContain('requestAnimationFrame');
+    expect(page).toContain('cardRefs');
+    expect(page).not.toContain('indexes.map((deckIndex, slot)');
+  });
+
+  it('preloads and renders the card back as a real image layer', () => {
+    expect(page).toContain("preload.src = '/card-back.webp'");
+    expect(page).toContain('<picture className="fan-card-art">');
+    expect(page).toContain('srcSet="/card-back.webp"');
+    expect(page).toContain('src="/card-back.jpg"');
+    expect(styles).not.toMatch(/\.fan-card\{[^}]*url\('\/card-back\.jpg'\)/);
   });
 });

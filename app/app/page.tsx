@@ -5,7 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
   type PointerEvent,
   type WheelEvent,
 } from 'react';
@@ -72,15 +73,19 @@ import {
 } from '@/lib/tarot';
 import {
   FAN_DRAG_THRESHOLD_PX,
+  FAN_MAX_OVERSCROLL_CARDS,
+  FAN_POOL_SIZE,
   FAN_PIXELS_PER_CARD,
   clampFanCenter,
+  elasticFanCenter,
   fanCardTransform,
   fanCenterFromDrag,
   fanInertiaTarget,
+  fanPoolIndexes,
   fanWheelDelta,
   recentFanVelocity,
+  stepFanMotion,
   type FanPointerSample,
-  visibleFanIndexes,
 } from '@/lib/fan';
 
 type Session = { memberId: string; nickname: string; token: string };
@@ -595,12 +600,36 @@ function TarotFan({
   loading: boolean;
   error: string;
 }) {
-  const visibleCount = Math.min(21, total);
-  const [center, setCenter] = useState(Math.floor((total - 1) / 2));
-  const [dragging, setDragging] = useState(false);
-  const [width, setWidth] = useState(390);
+  const initialCenter = useRef(Math.floor((total - 1) / 2)).current;
+  const slots = useMemo(
+    () =>
+      Array.from(
+        { length: Math.min(FAN_POOL_SIZE, total) },
+        (_, slot) => slot,
+      ),
+    [total],
+  );
+  const [cardBackReady, setCardBackReady] = useState(false);
+  const [moving, setMoving] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
-  const centerRef = useRef(center);
+  const cardRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const badgeRefs = useRef<Array<HTMLSpanElement | null>>([]);
+  const widthRef = useRef(390);
+  const paintFrameRef = useRef<number | null>(null);
+  const motionFrameRef = useRef<number | null>(null);
+  const reducedMotionRef = useRef(false);
+  const selectedRef = useRef(selected);
+  const requiredRef = useRef(required);
+  const onSelectRef = useRef(onSelect);
+  selectedRef.current = selected;
+  requiredRef.current = required;
+  onSelectRef.current = onSelect;
+  const motionRef = useRef({
+    position: initialCenter,
+    velocity: 0,
+    target: initialCenter,
+    lastTime: 0,
+  });
   const dragRef = useRef<{
     active: boolean;
     pointerId: number | null;
@@ -612,38 +641,173 @@ function TarotFan({
     active: false,
     pointerId: null,
     startX: 0,
-    startCenter: center,
+    startCenter: initialCenter,
     moved: false,
     samples: [],
   });
   const suppressClick = useRef(false);
   const wheelEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const indexes = useMemo(
-    () => visibleFanIndexes(total, center, visibleCount),
-    [center, total, visibleCount],
-  );
+
+  const writeCards = (position: number) => {
+    const indexes = fanPoolIndexes(total, position, slots.length);
+    const selectedCards = selectedRef.current;
+    indexes.forEach((deckIndex, slot) => {
+      const card = cardRefs.current[slot];
+      const badge = badgeRefs.current[slot];
+      if (!card || !badge) return;
+      const transform = fanCardTransform(deckIndex, position, widthRef.current);
+      const chosenAt = selectedCards.indexOf(deckIndex);
+      const chosen = chosenAt >= 0;
+      card.hidden = false;
+      card.dataset.deckIndex = String(deckIndex);
+      card.style.setProperty('--fan-x', `${transform.x}px`);
+      card.style.setProperty('--fan-y', `${transform.y}px`);
+      card.style.setProperty('--fan-rotation', `${transform.rotation}deg`);
+      card.style.zIndex = String(
+        chosen
+          ? 100 + chosenAt
+          : 50 -
+              Math.min(24, Math.round(Math.abs(deckIndex - position) * 2)),
+      );
+      card.classList.toggle('fan-card--chosen', chosen);
+      card.setAttribute('aria-pressed', String(chosen));
+      card.setAttribute(
+        'aria-label',
+        chosen
+          ? `第 ${chosenAt + 1} 张已选择的牌`
+          : `选择牌堆中的第 ${deckIndex + 1} 张`,
+      );
+      badge.textContent = chosen ? String(chosenAt + 1) : '✦';
+    });
+  };
+
+  const requestPaint = () => {
+    if (paintFrameRef.current !== null) return;
+    paintFrameRef.current = requestAnimationFrame(() => {
+      paintFrameRef.current = null;
+      writeCards(motionRef.current.position);
+    });
+  };
+
+  const cancelMotion = () => {
+    if (motionFrameRef.current !== null) {
+      cancelAnimationFrame(motionFrameRef.current);
+      motionFrameRef.current = null;
+    }
+    motionRef.current.lastTime = 0;
+  };
+
+  const setDirectPosition = (value: number, elastic = false) => {
+    cancelMotion();
+    motionRef.current.position = elastic
+      ? elasticFanCenter(value, total)
+      : clampFanCenter(value, total);
+    motionRef.current.velocity = 0;
+    motionRef.current.target = motionRef.current.position;
+    requestPaint();
+  };
+
+  const animateTo = (targetValue: number, initialVelocity = 0) => {
+    const target = Math.round(clampFanCenter(targetValue, total));
+    cancelMotion();
+    motionRef.current.target = target;
+    motionRef.current.velocity = initialVelocity;
+    if (reducedMotionRef.current) {
+      motionRef.current.position = target;
+      motionRef.current.velocity = 0;
+      writeCards(target);
+      setMoving(false);
+      return;
+    }
+    setMoving(true);
+    motionRef.current.lastTime = performance.now();
+    const tick = (time: number) => {
+      const elapsed = Math.max(1, time - motionRef.current.lastTime);
+      motionRef.current.lastTime = time;
+      const next = stepFanMotion(
+        {
+          position: motionRef.current.position,
+          velocity: motionRef.current.velocity,
+        },
+        target,
+        elapsed,
+      );
+      motionRef.current.position = Math.max(
+        -FAN_MAX_OVERSCROLL_CARDS,
+        Math.min(total - 1 + FAN_MAX_OVERSCROLL_CARDS, next.position),
+      );
+      motionRef.current.velocity = next.velocity;
+      writeCards(motionRef.current.position);
+      if (next.settled) {
+        motionRef.current.position = target;
+        motionRef.current.velocity = 0;
+        motionFrameRef.current = null;
+        writeCards(target);
+        setMoving(false);
+        return;
+      }
+      motionFrameRef.current = requestAnimationFrame(tick);
+    };
+    motionFrameRef.current = requestAnimationFrame(tick);
+  };
 
   useEffect(() => {
     if (!stageRef.current) return;
-    const update = () => setWidth(stageRef.current?.clientWidth ?? 390);
+    const update = () => {
+      widthRef.current = stageRef.current?.clientWidth ?? 390;
+      requestPaint();
+    };
     update();
     const observer = new ResizeObserver(update);
     observer.observe(stageRef.current);
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updateMotionPreference = () => {
+      reducedMotionRef.current = media.matches;
+    };
+    updateMotionPreference();
+    media.addEventListener('change', updateMotionPreference);
     return () => {
       observer.disconnect();
+      media.removeEventListener('change', updateMotionPreference);
       if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
+      if (paintFrameRef.current !== null) {
+        cancelAnimationFrame(paintFrameRef.current);
+      }
+      cancelMotion();
     };
   }, []);
 
-  const moveCenter = (value: number, elastic = false) => {
-    let next = clampFanCenter(value, total);
-    if (elastic && value < 0) next = Math.max(-2.4, value * 0.18);
-    if (elastic && value > total - 1) {
-      next = total - 1 + Math.min(2.4, (value - (total - 1)) * 0.18);
-    }
-    centerRef.current = next;
-    setCenter(next);
-  };
+  useEffect(() => {
+    let cancelled = false;
+    const markReady = () => {
+      if (!cancelled) setCardBackReady(true);
+    };
+    const loadFallback = () => {
+      const fallback = new Image();
+      fallback.onload = markReady;
+      fallback.onerror = markReady;
+      fallback.src = '/card-back.jpg';
+      const decoded = fallback.decode?.();
+      if (decoded) void decoded.then(markReady, () => undefined);
+    };
+    const preload = new Image();
+    preload.onload = () => {
+      const decoded = preload.decode?.();
+      if (decoded) void decoded.then(markReady, markReady);
+      else markReady();
+    };
+    preload.onerror = loadFallback;
+    preload.src = '/card-back.webp';
+    return () => {
+      cancelled = true;
+      preload.onload = null;
+      preload.onerror = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    requestPaint();
+  }, [selected, cardBackReady, total]);
 
   const addPointerSample = (x: number, time: number) => {
     dragRef.current.samples = [
@@ -655,13 +819,14 @@ function TarotFan({
     if (event.pointerType === 'mouse' && event.button !== 0) return;
     if (dragRef.current.active) return;
     if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
+    cancelMotion();
     suppressClick.current = false;
-    setDragging(true);
+    setMoving(true);
     dragRef.current = {
       active: true,
       pointerId: event.pointerId,
       startX: event.clientX,
-      startCenter: centerRef.current,
+      startCenter: motionRef.current.position,
       moved: false,
       samples: [{ x: event.clientX, time: event.timeStamp }],
     };
@@ -680,7 +845,10 @@ function TarotFan({
         event.currentTarget.setPointerCapture(event.pointerId);
       }
     }
-    moveCenter(fanCenterFromDrag(dragRef.current.startCenter, delta), true);
+    setDirectPosition(
+      fanCenterFromDrag(dragRef.current.startCenter, delta),
+      true,
+    );
   };
   const finishPointer = (
     event: PointerEvent<HTMLDivElement>,
@@ -697,32 +865,56 @@ function TarotFan({
     }
     suppressClick.current = dragRef.current.moved;
     const velocity = recentFanVelocity(dragRef.current.samples);
-    const currentCenter = clampFanCenter(centerRef.current, total);
+    const currentCenter = clampFanCenter(motionRef.current.position, total);
     const target =
       useInertia && dragRef.current.moved
         ? fanInertiaTarget(currentCenter, velocity, total)
         : Math.round(currentCenter);
     dragRef.current.active = false;
     dragRef.current.pointerId = null;
-    setDragging(false);
-    moveCenter(target);
+    const initialVelocity = Math.max(
+      -18,
+      Math.min(18, (-velocity * 1000) / FAN_PIXELS_PER_CARD),
+    );
+    animateTo(target, useInertia ? initialVelocity : 0);
   };
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
     const delta = fanWheelDelta(event.deltaX, event.deltaY, event.shiftKey);
     if (!delta || dragRef.current.active) return;
     event.preventDefault();
     const limitedDelta = Math.max(-42, Math.min(42, delta));
-    setDragging(true);
-    moveCenter(
-      centerRef.current + limitedDelta / FAN_PIXELS_PER_CARD,
+    setMoving(true);
+    setDirectPosition(
+      motionRef.current.position + limitedDelta / FAN_PIXELS_PER_CARD,
       true,
     );
     if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
     wheelEndTimer.current = setTimeout(() => {
-      setDragging(false);
-      moveCenter(Math.round(clampFanCenter(centerRef.current, total)));
+      animateTo(Math.round(clampFanCenter(motionRef.current.position, total)));
       wheelEndTimer.current = null;
     }, 90);
+  };
+
+  const handleCardClick = (event: MouseEvent<HTMLButtonElement>) => {
+    if (suppressClick.current) {
+      suppressClick.current = false;
+      return;
+    }
+    const deckIndex = Number(event.currentTarget.dataset.deckIndex);
+    if (!Number.isInteger(deckIndex)) return;
+    const chosen = selectedRef.current.includes(deckIndex);
+    if (chosen || selectedRef.current.length < requiredRef.current) {
+      onSelectRef.current(deckIndex);
+    }
+  };
+
+  const handleCardKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const direction = event.key === 'ArrowLeft' ? -2 : 2;
+    animateTo(
+      clampFanCenter(Math.round(motionRef.current.position) + direction, total),
+    );
   };
 
   return (
@@ -751,7 +943,7 @@ function TarotFan({
       </div>
       <div
         ref={stageRef}
-        className={`fan-stage ${dragging ? 'is-dragging' : 'is-settling'}`}
+        className={`fan-stage ${moving ? 'is-moving' : 'is-settled'} ${cardBackReady ? 'is-ready' : 'is-loading'}`}
         aria-label="可左右拖动的塔罗牌阵"
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -759,49 +951,46 @@ function TarotFan({
         onPointerCancel={(event) => finishPointer(event, false)}
         onWheel={handleWheel}
       >
-        {indexes.map((deckIndex, slot) => {
-          const transform = fanCardTransform(
-            deckIndex,
-            center,
-            width,
-          );
-          const chosenAt = selected.indexOf(deckIndex);
-          const chosen = chosenAt >= 0;
-          return (
-            <button
-              type="button"
-              key={deckIndex}
-              className={`fan-card ${chosen ? 'fan-card--chosen' : ''}`}
-              style={
-                {
-                  '--fan-x': `${transform.x}px`,
-                  '--fan-y': `${transform.y}px`,
-                  '--fan-rotation': `${transform.rotation}deg`,
-                  zIndex: chosen ? 100 + chosenAt : 20 + slot,
-                } as CSSProperties
-              }
-              aria-label={
-                chosen
-                  ? `第 ${chosenAt + 1} 张已选择的牌`
-                  : `选择牌堆中的第 ${deckIndex + 1} 张`
-              }
-              aria-pressed={chosen}
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowLeft') moveCenter(center - 2);
-                if (event.key === 'ArrowRight') moveCenter(center + 2);
+        {slots.map((slot) => (
+          <button
+            type="button"
+            key={slot}
+            ref={(node) => {
+              cardRefs.current[slot] = node;
+            }}
+            className="fan-card"
+            aria-label="塔罗牌背"
+            aria-pressed="false"
+            onKeyDown={handleCardKeyDown}
+            onClick={handleCardClick}
+          >
+            <picture className="fan-card-art">
+              <source srcSet="/card-back.webp" type="image/webp" />
+              <img
+                src="/card-back.jpg"
+                alt=""
+                draggable={false}
+                decoding="async"
+                onError={(event) => {
+                  const source =
+                    event.currentTarget.parentElement?.querySelector('source');
+                  source?.removeAttribute('srcset');
+                  if (!event.currentTarget.src.endsWith('/card-back.jpg')) {
+                    event.currentTarget.src = '/card-back.jpg';
+                  }
+                }}
+              />
+            </picture>
+            <span
+              ref={(node) => {
+                badgeRefs.current[slot] = node;
               }}
-              onClick={() => {
-                if (suppressClick.current) {
-                  suppressClick.current = false;
-                  return;
-                }
-                if (chosen || selected.length < required) onSelect(deckIndex);
-              }}
+              className="fan-card-badge"
             >
-              <span>{chosen ? chosenAt + 1 : '✦'}</span>
-            </button>
-          );
-        })}
+              ✦
+            </span>
+          </button>
+        ))}
         <div className="fan-table-mark" aria-hidden="true">
           <MoonStar />
         </div>

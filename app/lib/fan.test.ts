@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
   FAN_DRAG_THRESHOLD_PX,
+  FAN_POOL_SIZE,
   FAN_PIXELS_PER_CARD,
   clampFanCenter,
+  elasticFanCenter,
   fanCardTransform,
   fanCenterFromDrag,
   fanInertiaTarget,
+  fanPoolIndexes,
   fanWheelDelta,
   recentFanVelocity,
+  stepFanMotion,
   visibleFanIndexes,
 } from './fan';
 
@@ -68,5 +72,39 @@ describe('tarot fan geometry', () => {
     expect(fanWheelDelta(24, 4, false)).toBe(24);
     expect(fanWheelDelta(0, 32, true)).toBe(32);
     expect(fanWheelDelta(0, 32, false)).toBe(0);
+  });
+
+  it('keeps a fixed card pool while the visible deck window moves', () => {
+    expect(FAN_POOL_SIZE).toBe(25);
+    expect(fanPoolIndexes(78, 0)).toEqual(
+      Array.from({ length: 25 }, (_, index) => index),
+    );
+    expect(fanPoolIndexes(78, 38.4)).toHaveLength(25);
+    expect(fanPoolIndexes(78, 77)).toEqual(
+      Array.from({ length: 25 }, (_, index) => index + 53),
+    );
+  });
+
+  it('allows a larger but bounded nonlinear pull beyond either edge', () => {
+    expect(elasticFanCenter(-1, 78)).toBeLessThan(-0.9);
+    expect(elasticFanCenter(-50, 78)).toBeGreaterThan(-5.01);
+    expect(elasticFanCenter(78, 78)).toBeGreaterThan(77.9);
+    expect(elasticFanCenter(127, 78)).toBeLessThan(82.01);
+  });
+
+  it('advances spring motion frame by frame instead of jumping to its target', () => {
+    let motion = stepFanMotion(
+      { position: 38, velocity: 0 },
+      50,
+      16,
+    );
+    expect(motion.position).toBeGreaterThan(38);
+    expect(motion.position).toBeLessThan(50);
+    expect(motion.settled).toBe(false);
+
+    for (let frame = 0; frame < 180 && !motion.settled; frame += 1) {
+      motion = stepFanMotion(motion, 50, 16);
+    }
+    expect(motion).toEqual({ position: 50, velocity: 0, settled: true });
   });
 });
