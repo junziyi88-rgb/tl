@@ -666,8 +666,7 @@ function TarotFan({
       card.style.zIndex = String(
         chosen
           ? 100 + chosenAt
-          : 50 -
-              Math.min(24, Math.round(Math.abs(deckIndex - position) * 2)),
+          : 20 + slot,
       );
       card.classList.toggle('fan-card--chosen', chosen);
       card.setAttribute('aria-pressed', String(chosen));
