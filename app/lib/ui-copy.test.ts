@@ -65,9 +65,9 @@ describe('stable tarot fan renderer', () => {
   });
 
   it('preloads and renders the card back as a real image layer', () => {
-    expect(page).toContain("preload.src = '/card-back.webp'");
+    expect(page).toContain("preload.src = '/card-back-source.svg'");
     expect(page).toContain('<picture className="fan-card-art">');
-    expect(page).toContain('srcSet="/card-back.webp"');
+    expect(page).toContain('srcSet="/card-back-source.svg"');
     expect(page).toContain('src="/card-back.jpg"');
     expect(styles).not.toMatch(/\.fan-card\{[^}]*url\('\/card-back\.jpg'\)/);
   });

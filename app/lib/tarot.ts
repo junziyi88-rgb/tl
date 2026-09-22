@@ -132,7 +132,8 @@ export function validateSpread(value: unknown): { ok: true; value: SpreadDefinit
   if (!Array.isArray(raw.positions) || raw.positions.some((position) => !position || typeof position.id !== 'string' || !position.id.trim() || position.id.length > 80 || typeof position.question !== 'string' || !position.question.trim() || position.question.length > 80)) return { ok: false, error: '请填写每张牌的小问题（80 字以内）' };
   const normalized = normalizeSpread(raw);
   if (!normalized.name) return { ok: false, error: '请填写牌阵名称' };
-  if (normalized.positions.length < 1 || normalized.positions.length > 12) return { ok: false, error: '牌阵需要 1–12 张牌' };
+  const basePositions = normalized.positions.filter((position) => !position.id.includes('-supplement-'));
+  if (basePositions.length < 1 || basePositions.length > 12 || normalized.positions.length > 21) return { ok: false, error: '牌阵需要 1–12 张牌，补抽后最多 21 张' };
   if (normalized.positions.some((position) => !position.question)) return { ok: false, error: '请填写每张牌的小问题' };
   if (new Set(normalized.positions.map((position) => position.id)).size !== normalized.positions.length) return { ok: false, error: '牌位标识不能重复' };
   return { ok: true, value: normalized };

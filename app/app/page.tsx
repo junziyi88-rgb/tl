@@ -121,7 +121,7 @@ function CardFace({
         className={`tarot-card ${compact ? 'tarot-card--compact' : ''} ${hidden ? 'tarot-card--hidden' : ''}`}
       >
         <img
-          src={hidden ? '/card-back.jpg' : (card?.image ?? '/card-back.jpg')}
+          src={hidden ? '/card-back-source.svg' : (card?.image ?? '/card-back.jpg')}
           alt={
             hidden
               ? '未翻开的塔罗牌'
@@ -796,7 +796,7 @@ function TarotFan({
       else markReady();
     };
     preload.onerror = loadFallback;
-    preload.src = '/card-back.webp';
+    preload.src = '/card-back-source.svg';
     return () => {
       cancelled = true;
       preload.onload = null;
@@ -964,7 +964,7 @@ function TarotFan({
             onClick={handleCardClick}
           >
             <picture className="fan-card-art">
-              <source srcSet="/card-back.webp" type="image/webp" />
+              <source srcSet="/card-back-source.svg" type="image/svg+xml" />
               <img
                 src="/card-back.jpg"
                 alt=""
@@ -1047,6 +1047,9 @@ export default function Home() {
   const [cards, setCards] = useState<DrawnCard[]>([]);
   const [deck, setDeck] = useState<DeckCard[]>([]);
   const [fanSelected, setFanSelected] = useState<number[]>([]);
+  const [supplementDraws, setSupplementDraws] = useState(0);
+  const [supplementCount, setSupplementCount] = useState(0);
+  const [supplementBaseCount, setSupplementBaseCount] = useState(0);
   const [revealed, setRevealed] = useState(0);
   const [interpretation, setInterpretation] = useState('');
   const [tags, setTags] = useState('');
@@ -1164,6 +1167,9 @@ export default function Home() {
     setCards([]);
     setDeck([]);
     setFanSelected([]);
+    setSupplementDraws(0);
+    setSupplementCount(0);
+    setSupplementBaseCount(0);
     setInterpretation('');
     setTags('');
     setAiVersions([]);
@@ -1224,15 +1230,55 @@ export default function Home() {
     }
   };
   const finalizeFanSelection = () => {
-    if (!selectedSpread || fanSelected.length !== selectedSpread.positions.length)
-      return;
+    if (!selectedSpread) return;
+    const required = supplementCount
+      ? supplementBaseCount + supplementCount
+      : selectedSpread.positions.length;
+    if (fanSelected.length !== required) return;
     try {
+      if (supplementCount) {
+        const round = supplementDraws + 1;
+        const positions = fanSelected
+          .slice(supplementBaseCount)
+          .map((_, index) => ({
+            id: `${selectedSpread.id}-supplement-${round}-${index + 1}`,
+            question:
+              supplementCount === 1
+                ? `第 ${round} 次补抽`
+                : `第 ${round} 次补抽 · 第 ${index + 1} 张`,
+          }));
+        const extraCards = fanSelected
+          .slice(supplementBaseCount)
+          .map((deckIndex, index) => ({
+            ...deck[deckIndex],
+            positionId: positions[index].id,
+            position: positions[index].question,
+          }));
+        setSelectedSpread({
+          ...selectedSpread,
+          positions: [...selectedSpread.positions, ...positions],
+        });
+        setCards((items) => [...items, ...extraCards]);
+        setRevealed(cards.length);
+        setSupplementDraws(round);
+        setSupplementCount(0);
+        setSupplementBaseCount(0);
+        setView('online');
+        return;
+      }
       setCards(selectCardsFromDeck(deck, selectedSpread, fanSelected));
       setRevealed(0);
       setView('online');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '牌面没有显现，请重试');
     }
+  };
+  const startSupplement = (count: 1 | 2 | 3) => {
+    if (supplementDraws >= 3) return;
+    invalidateAi();
+    setSupplementBaseCount(fanSelected.length);
+    setSupplementCount(count);
+    setView('fan');
   };
   const saveNickname = async () => {
     setLoading(true);
@@ -1514,15 +1560,33 @@ export default function Home() {
     return (
       <TarotFan
         total={deck.length}
-        required={selectedSpread.positions.length}
+        required={
+          supplementCount
+            ? supplementBaseCount + supplementCount
+            : selectedSpread.positions.length
+        }
         selected={fanSelected}
-        onBack={() => setView('breathe')}
+        onBack={() => {
+          if (supplementCount) {
+            setFanSelected((items) => items.slice(0, supplementBaseCount));
+            setSupplementCount(0);
+            setSupplementBaseCount(0);
+            setView('compose');
+          } else {
+            setView('breathe');
+          }
+        }}
         onSelect={(index) =>
-          setFanSelected((items) =>
-            items.includes(index)
+          setFanSelected((items) => {
+            if (
+              supplementCount &&
+              items.slice(0, supplementBaseCount).includes(index)
+            )
+              return items;
+            return items.includes(index)
               ? items.filter((item) => item !== index)
-              : [...items, index],
-          )
+              : [...items, index];
+          })
         }
         onFinish={finalizeFanSelection}
         loading={loading}
@@ -1687,6 +1751,31 @@ export default function Home() {
         <div className="mx-auto max-w-4xl px-4 pb-40 pt-7 sm:px-6">
           <div className="question-ribbon">你问：{question}</div>
           <ReadingCards cards={cards} />
+          {mode === 'online' && (
+            <div className="supplement-draw">
+              <div>
+                <p className="eyebrow">补抽</p>
+                <p>
+                  {supplementDraws < 3
+                    ? `还可补抽 ${3 - supplementDraws} 次`
+                    : '已完成 3 次补抽'}
+                </p>
+              </div>
+              {supplementDraws < 3 && (
+                <div>
+                  {([1, 2, 3] as const).map((count) => (
+                    <Button
+                      key={count}
+                      variant="outline"
+                      onClick={() => startSupplement(count)}
+                    >
+                      补抽 {count} 张
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="mt-8">
             <Button
               className="gold-button h-12 w-full"
