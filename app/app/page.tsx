@@ -102,6 +102,30 @@ type View =
   | 'detail';
 type SpreadOrigin = 'builtin' | 'saved' | 'temporary';
 const SESSION_KEY = 'gongjian-tarot-cloudbase-session-v1';
+const SPREAD_DESCRIPTIONS: Record<string, string> = {
+  'three-card': '不预设答案，让三张牌自由构成此刻最需要被看见的讯息。',
+  'three-card-guidance': '三张牌揭开局势，最后一张指引牌为你指出穿越迷雾的方向。',
+  timeline: '沿时间的暗流回望来处、照见当下，并窥见未来正在形成的轮廓。',
+  'one-card': '以一张牌凝聚此刻最核心的能量，获得清晰而直接的启示。',
+  exploration: '由表及里拆解现状、阻碍与根源，让答案最终落到可行的下一步。',
+  'two-choice': '让两条道路同时显影，看见各自的代价、潜能与最终回声。',
+  'venus-love': '借爱与欲望的镜面，映照双方真心、牵引、阻碍与未来心境。',
+  'love-answer': '穿越感情的过去与当下，读懂彼此姿态以及关系最终的落点。',
+  'inner-voice': '潜入关系未说出口的深处，聆听印象、期待与真实心声。',
+  'know-their-heart': '越过表面言行，辨认对方潜意识中的感受、打算与靠近方式。',
+  'lover-pyramid': '从双方状态与关系根基向上推演，看见这段关系可能抵达的顶点。',
+  'emotional-realm': '展开双方内在世界，审视现状、趋势与这段情感的最终归宿。',
+  'love-cross': '以交汇的五个视角定位情感核心，找出阻碍与未来转机。',
+  'relationship-outlook': '并置双方视角，校准关系现实，并照见未来最可能的走向。',
+  friendship: '在彼此眼中的镜像里，理解友谊现状与双方真正期待的未来。',
+};
+
+function spreadDescription(spread: SpreadDefinition) {
+  return (
+    SPREAD_DESCRIPTIONS[spread.id] ??
+    '由你亲手设定的观察仪式，让每一个牌位回应独属于此刻的问题。'
+  );
+}
 
 function CardFace({
   drawn,
@@ -581,6 +605,35 @@ function RitualStage({
   );
 }
 
+function SpreadPreview({
+  spread,
+  onClose,
+}: {
+  spread: SpreadDefinition;
+  onClose: () => void;
+}) {
+  return (
+    <div className="spread-preview-overlay" role="dialog" aria-modal="true">
+      <div className="spread-preview-dialog">
+        <button type="button" onClick={onClose} aria-label="关闭牌阵预览">
+          <X />
+        </button>
+        <p className="eyebrow">牌阵样式</p>
+        <h2>{spread.name}</h2>
+        <p>{spreadDescription(spread)}</p>
+        <div className={`spread-preview-layout spread-preview-layout--${spread.id}`}>
+          {spread.positions.map((position, index) => (
+            <div key={position.id}>
+              <span>{index + 1}</span>
+              <small>{position.question}</small>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TarotFan({
   total,
   required,
@@ -707,7 +760,7 @@ function TarotFan({
   };
 
   const animateTo = (targetValue: number, initialVelocity = 0) => {
-    const target = Math.round(clampFanCenter(targetValue, total));
+    const target = clampFanCenter(targetValue, total);
     cancelMotion();
     motionRef.current.target = target;
     motionRef.current.velocity = initialVelocity;
@@ -868,7 +921,7 @@ function TarotFan({
     const target =
       useInertia && dragRef.current.moved
         ? fanInertiaTarget(currentCenter, velocity, total)
-        : Math.round(currentCenter);
+        : currentCenter;
     dragRef.current.active = false;
     dragRef.current.pointerId = null;
     const initialVelocity = Math.max(
@@ -889,7 +942,7 @@ function TarotFan({
     );
     if (wheelEndTimer.current) clearTimeout(wheelEndTimer.current);
     wheelEndTimer.current = setTimeout(() => {
-      animateTo(Math.round(clampFanCenter(motionRef.current.position, total)));
+      animateTo(clampFanCenter(motionRef.current.position, total));
       wheelEndTimer.current = null;
     }, 90);
   };
@@ -1044,12 +1097,16 @@ export default function Home() {
   const [editingSpread, setEditingSpread] = useState<
     CustomSpread | undefined
   >();
+  const [previewSpread, setPreviewSpread] = useState<SpreadDefinition | null>(
+    null,
+  );
   const [cards, setCards] = useState<DrawnCard[]>([]);
   const [deck, setDeck] = useState<DeckCard[]>([]);
   const [fanSelected, setFanSelected] = useState<number[]>([]);
   const [supplementDraws, setSupplementDraws] = useState(0);
   const [supplementCount, setSupplementCount] = useState(0);
   const [supplementBaseCount, setSupplementBaseCount] = useState(0);
+  const [supplementOpen, setSupplementOpen] = useState(false);
   const [revealed, setRevealed] = useState(0);
   const [interpretation, setInterpretation] = useState('');
   const [tags, setTags] = useState('');
@@ -1170,6 +1227,7 @@ export default function Home() {
     setSupplementDraws(0);
     setSupplementCount(0);
     setSupplementBaseCount(0);
+    setSupplementOpen(false);
     setInterpretation('');
     setTags('');
     setAiVersions([]);
@@ -1276,6 +1334,7 @@ export default function Home() {
   const startSupplement = (count: 1 | 2 | 3) => {
     if (supplementDraws >= 3) return;
     invalidateAi();
+    setSupplementOpen(false);
     setSupplementBaseCount(fanSelected.length);
     setSupplementCount(count);
     setView('fan');
@@ -1451,7 +1510,11 @@ export default function Home() {
               <button
                 key={spread.id}
                 className={`spread-choice group ${selectedSpread?.id === spread.id ? 'selected' : ''}`}
-                onClick={() => useSpread(spread, 'builtin')}
+                onClick={() =>
+                  selectedSpread?.id === spread.id
+                    ? setPreviewSpread(spread)
+                    : useSpread(spread, 'builtin')
+                }
               >
                 <div className="spread-count">{spread.positions.length}</div>
                 <div className="min-w-0 flex-1 text-left">
@@ -1459,9 +1522,7 @@ export default function Home() {
                     {spread.name}
                   </p>
                   <p className="mt-1 line-clamp-2 text-sm text-[#81798e]">
-                    {spread.positions
-                      .map((position) => position.question)
-                      .join(' · ')}
+                    {spreadDescription(spread)}
                   </p>
                 </div>
                 <ChevronRight />
@@ -1474,10 +1535,14 @@ export default function Home() {
               {customSpreads.map((spread) => (
                 <div key={spread.id} className="saved-spread">
                   <button
-                    onClick={() => useSpread(spread, 'saved')}
+                    onClick={() =>
+                      selectedSpread?.id === spread.id
+                        ? setPreviewSpread(spread)
+                        : useSpread(spread, 'saved')
+                    }
                   >
                     <b>{spread.name}</b>
-                    <small>{spread.positions.length} 张牌</small>
+                    <small>{spreadDescription(spread)}</small>
                   </button>
                   <Button
                     variant="ghost"
@@ -1528,6 +1593,12 @@ export default function Home() {
               : '选择牌阵后继续'}
           </Button>
         </div>
+        {previewSpread && (
+          <SpreadPreview
+            spread={previewSpread}
+            onClose={() => setPreviewSpread(null)}
+          />
+        )}
       </section>
     );
   if (view === 'breathe' && selectedSpread)
@@ -1751,31 +1822,6 @@ export default function Home() {
         <div className="mx-auto max-w-4xl px-4 pb-40 pt-7 sm:px-6">
           <div className="question-ribbon">你问：{question}</div>
           <ReadingCards cards={cards} />
-          {mode === 'online' && (
-            <div className="supplement-draw">
-              <div>
-                <p className="eyebrow">补抽</p>
-                <p>
-                  {supplementDraws < 3
-                    ? `还可补抽 ${3 - supplementDraws} 次`
-                    : '已完成 3 次补抽'}
-                </p>
-              </div>
-              {supplementDraws < 3 && (
-                <div>
-                  {([1, 2, 3] as const).map((count) => (
-                    <Button
-                      key={count}
-                      variant="outline"
-                      onClick={() => startSupplement(count)}
-                    >
-                      补抽 {count} 张
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           <div className="mt-8">
             <Button
               className="gold-button h-12 w-full"
@@ -1829,6 +1875,33 @@ export default function Home() {
               <p className="rounded-xl border border-[#8e514a]/30 bg-[#8e514a]/10 p-3 text-sm text-[#e0a096]">
                 {error}
               </p>
+            )}
+            {mode === 'online' && (
+              <div className="supplement-draw">
+                <Button
+                  variant="outline"
+                  disabled={supplementDraws >= 3}
+                  onClick={() => setSupplementOpen((value) => !value)}
+                >
+                  <Plus />
+                  {supplementDraws >= 3
+                    ? '已完成 3 次补抽'
+                    : `补抽牌（还可 ${3 - supplementDraws} 次）`}
+                </Button>
+                {supplementOpen && supplementDraws < 3 && (
+                  <div>
+                    {([1, 2, 3] as const).map((count) => (
+                      <Button
+                        key={count}
+                        variant="ghost"
+                        onClick={() => startSupplement(count)}
+                      >
+                        {count} 张
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
             <Button
               variant="ghost"

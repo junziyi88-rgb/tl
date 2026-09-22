@@ -98,6 +98,7 @@ const spread = (id: string, name: string, questions: string[]): SpreadDefinition
 
 export const BUILT_IN_SPREADS: readonly SpreadDefinition[] = [
   spread('three-card', '三张无牌阵', ['第一张牌', '第二张牌', '第三张牌']),
+  spread('three-card-guidance', '带指引牌的三张无牌阵', ['第一张牌', '第二张牌', '第三张牌', '指引牌']),
   spread('timeline', '时间之流', ['过去', '现在', '未来']),
   spread('one-card', '一张牌', ['本次指引']),
   spread('exploration', '探索', ['现状', '阻碍', '根源', '建议', '可能结果']),

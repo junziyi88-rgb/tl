@@ -115,7 +115,7 @@ export function fanInertiaTarget(
   total: number,
 ) {
   if (Math.abs(velocityPxPerMs) < FAN_INERTIA_THRESHOLD_PX_PER_MS) {
-    return Math.round(clampFanCenter(center, total));
+    return clampFanCenter(center, total);
   }
   const projectedCards = Math.min(
     FAN_MAX_INERTIA_CARDS,
@@ -126,7 +126,7 @@ export function fanInertiaTarget(
     ),
   );
   const projectedCenter = center - Math.sign(velocityPxPerMs) * projectedCards;
-  return Math.round(clampFanCenter(projectedCenter, total));
+  return clampFanCenter(projectedCenter, total);
 }
 
 export function fanWheelDelta(
