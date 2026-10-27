@@ -6,3 +6,8 @@ data/*.tmp
 .env
 playwright-report/
 test-results/
+
+# Local browser profiles and login captures
+.chrome-debug-ai/
+.chrome-headless-test/
+feishu-login.png
