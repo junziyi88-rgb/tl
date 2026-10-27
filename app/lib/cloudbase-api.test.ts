@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { BUILT_IN_SPREADS } from './tarot';
 import {
+  buildOwnerRequestHeaders,
   createDeck,
   drawCards,
   mapReadingRow,
@@ -12,6 +13,26 @@ import {
 } from './cloudbase-api';
 
 describe('CloudBase tarot data contract', () => {
+  it('sends the local owner identity as RLS request headers', () => {
+    expect(
+      buildOwnerRequestHeaders({
+        memberId: '11111111-1111-4111-8111-111111111111',
+        nickname: '小月',
+        token: 'owner-secret-token',
+      }),
+    ).toEqual({
+      'x-owner-id': '11111111-1111-4111-8111-111111111111',
+      'x-owner-token': 'owner-secret-token',
+    });
+  });
+
+  it('uses table REST endpoints without database RPC functions', () => {
+    const source = readFileSync(new URL('./cloudbase-api.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain('/rest/v1/rpc/');
+    expect(source).toContain('/rest/v1/readings');
+    expect(source).toContain('/rest/v1/custom_spreads');
+  });
+
   it('starts anonymous login when the first session has no credentials', async () => {
     const user = await resolveAnonymousUser({
       getSession: async () => ({

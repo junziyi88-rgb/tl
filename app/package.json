@@ -8,10 +8,15 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:supabase": "vite build --mode supabase",
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "db:check-tools": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/Test-PostgresTools.ps1",
+    "db:backup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/backup-supabase.ps1",
+    "db:restore": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/restore-supabase.ps1",
+    "db:schedule-backup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/Register-WeeklyBackupTask.ps1"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -24,6 +29,7 @@
     "embla-carousel-react": "8.5.2",
     "input-otp": "1.4.2",
     "lucide-react": "1.31.0",
+    "pg": "^8.23.0",
     "react": "19.2.6",
     "react-day-picker": "9.8.1",
     "react-dom": "19.2.6",

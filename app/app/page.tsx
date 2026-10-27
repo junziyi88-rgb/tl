@@ -103,21 +103,21 @@ type View =
 type SpreadOrigin = 'builtin' | 'saved' | 'temporary';
 const SESSION_KEY = 'gongjian-tarot-cloudbase-session-v1';
 const SPREAD_DESCRIPTIONS: Record<string, string> = {
-  'three-card': '不预设答案，让三张牌自由构成此刻最需要被看见的讯息。',
-  'three-card-guidance': '三张牌揭开局势，最后一张指引牌为你指出穿越迷雾的方向。',
-  timeline: '沿时间的暗流回望来处、照见当下，并窥见未来正在形成的轮廓。',
-  'one-card': '以一张牌凝聚此刻最核心的能量，获得清晰而直接的启示。',
-  exploration: '由表及里拆解现状、阻碍与根源，让答案最终落到可行的下一步。',
-  'two-choice': '让两条道路同时显影，看见各自的代价、潜能与最终回声。',
-  'venus-love': '借爱与欲望的镜面，映照双方真心、牵引、阻碍与未来心境。',
-  'love-answer': '穿越感情的过去与当下，读懂彼此姿态以及关系最终的落点。',
-  'inner-voice': '潜入关系未说出口的深处，聆听印象、期待与真实心声。',
-  'know-their-heart': '越过表面言行，辨认对方潜意识中的感受、打算与靠近方式。',
-  'lover-pyramid': '从双方状态与关系根基向上推演，看见这段关系可能抵达的顶点。',
-  'emotional-realm': '展开双方内在世界，审视现状、趋势与这段情感的最终归宿。',
-  'love-cross': '以交汇的五个视角定位情感核心，找出阻碍与未来转机。',
-  'relationship-outlook': '并置双方视角，校准关系现实，并照见未来最可能的走向。',
-  friendship: '在彼此眼中的镜像里，理解友谊现状与双方真正期待的未来。',
+  'three-card': '三张牌，自由回应此刻的问题',
+  'three-card-guidance': '三张主牌 + 一张指引牌',
+  timeline: '过去 · 现在 · 未来',
+  'one-card': '凝聚当下的一则核心指引',
+  exploration: '现状 · 阻碍 · 根源 · 建议 · 结果',
+  'two-choice': '对照两条道路的发展与结果',
+  'venus-love': '双方真心、影响、阻碍与未来',
+  'love-answer': '过去 · 双方态度 · 结果',
+  'inner-voice': '印象、心态、期待与关系建议',
+  'know-their-heart': '潜意识感受 · 想法 · 行动方式',
+  'lover-pyramid': '双方现状 · 关系 · 结果',
+  'emotional-realm': '双方想法 · 现状 · 趋势 · 结果',
+  'love-cross': '双方状态 · 现状 · 阻碍 · 未来',
+  'relationship-outlook': '双方看法 · 关系现状 · 未来',
+  friendship: '彼此看法 · 关系现状 · 未来期待',
 };
 
 function spreadDescription(spread: SpreadDefinition) {
@@ -197,16 +197,22 @@ function CardFace({
 function ReadingCards({
   cards,
   compact = false,
+  spreadId,
 }: {
   cards: DrawnCard[];
   compact?: boolean;
+  spreadId?: string;
 }) {
   return (
     <div
-      className="reading-cards"
-      style={{
-        gridTemplateColumns: `repeat(${Math.min(cards.length, compact ? 6 : 4)}, minmax(0, 1fr))`,
-      }}
+      className={`reading-cards ${spreadId ? `spread-layout spread-layout--${spreadId}` : ''}`}
+      style={
+        spreadId
+          ? undefined
+          : {
+              gridTemplateColumns: `repeat(${Math.min(cards.length, compact ? 6 : 4)}, minmax(0, 1fr))`,
+            }
+      }
     >
       {cards.map((card, index) => (
         <CardFace
@@ -621,7 +627,7 @@ function SpreadPreview({
         <p className="eyebrow">牌阵样式</p>
         <h2>{spread.name}</h2>
         <p>{spreadDescription(spread)}</p>
-        <div className={`spread-preview-layout spread-preview-layout--${spread.id}`}>
+        <div className={`spread-preview-layout spread-layout spread-layout--${spread.id}`}>
           {spread.positions.map((position, index) => (
             <div key={position.id}>
               <span>{index + 1}</span>
@@ -1107,6 +1113,7 @@ export default function Home() {
   const [supplementCount, setSupplementCount] = useState(0);
   const [supplementBaseCount, setSupplementBaseCount] = useState(0);
   const [supplementOpen, setSupplementOpen] = useState(false);
+  const [supplementQuestion, setSupplementQuestion] = useState('');
   const [revealed, setRevealed] = useState(0);
   const [interpretation, setInterpretation] = useState('');
   const [tags, setTags] = useState('');
@@ -1228,6 +1235,7 @@ export default function Home() {
     setSupplementCount(0);
     setSupplementBaseCount(0);
     setSupplementOpen(false);
+    setSupplementQuestion('');
     setInterpretation('');
     setTags('');
     setAiVersions([]);
@@ -1300,10 +1308,9 @@ export default function Home() {
           .slice(supplementBaseCount)
           .map((_, index) => ({
             id: `${selectedSpread.id}-supplement-${round}-${index + 1}`,
-            question:
-              supplementCount === 1
-                ? `第 ${round} 次补抽`
-                : `第 ${round} 次补抽 · 第 ${index + 1} 张`,
+            question: supplementCount === 1
+              ? supplementQuestion.trim()
+              : `${supplementQuestion.trim()}（补牌 ${index + 1}）`,
           }));
         const extraCards = fanSelected
           .slice(supplementBaseCount)
@@ -1321,6 +1328,7 @@ export default function Home() {
         setSupplementDraws(round);
         setSupplementCount(0);
         setSupplementBaseCount(0);
+        setSupplementQuestion('');
         setView('online');
         return;
       }
@@ -1333,7 +1341,12 @@ export default function Home() {
   };
   const startSupplement = (count: 1 | 2 | 3) => {
     if (supplementDraws >= 3) return;
+    if (!supplementQuestion.trim()) {
+      setError('请先写下补问问题');
+      return;
+    }
     invalidateAi();
+    setError('');
     setSupplementOpen(false);
     setSupplementBaseCount(fanSelected.length);
     setSupplementCount(count);
@@ -1521,7 +1534,7 @@ export default function Home() {
                   <p className="font-serif text-lg font-semibold text-[#f0e6d4]">
                     {spread.name}
                   </p>
-                  <p className="mt-1 line-clamp-2 text-sm text-[#81798e]">
+                  <p className="mt-1 line-clamp-1 text-sm text-[#81798e]">
                     {spreadDescription(spread)}
                   </p>
                 </div>
@@ -1679,10 +1692,7 @@ export default function Home() {
             <h2 className="section-title">让牌面慢慢显现</h2>
           </div>
           <div
-            className="reading-cards mt-9"
-            style={{
-              gridTemplateColumns: `repeat(${Math.min(cards.length, 4)}, minmax(0, 1fr))`,
-            }}
+            className={`reading-cards spread-layout spread-layout--${selectedSpread.id} mt-9`}
           >
             {cards.map((card, index) => (
               <CardFace
@@ -1821,7 +1831,7 @@ export default function Home() {
         />
         <div className="mx-auto max-w-4xl px-4 pb-40 pt-7 sm:px-6">
           <div className="question-ribbon">你问：{question}</div>
-          <ReadingCards cards={cards} />
+          <ReadingCards cards={cards} spreadId={selectedSpread.id} />
           <div className="mt-8">
             <Button
               className="gold-button h-12 w-full"
@@ -1890,6 +1900,13 @@ export default function Home() {
                 </Button>
                 {supplementOpen && supplementDraws < 3 && (
                   <div>
+                    <Input
+                      value={supplementQuestion}
+                      onChange={(event) => setSupplementQuestion(event.target.value)}
+                      placeholder="写下这次想补问的问题"
+                      aria-label="补问问题"
+                      className="form-control"
+                    />
                     {([1, 2, 3] as const).map((count) => (
                       <Button
                         key={count}
@@ -2255,7 +2272,7 @@ function Detail({
           </Badge>
         </div>
         <h1 className="detail-title">{reading.question}</h1>
-        <ReadingCards cards={reading.cards} />
+        <ReadingCards cards={reading.cards} spreadId={reading.spread.id} />
         {reading.aiInterpretation && (
           <section className="detail-block">
             <AiPreview value={reading.aiInterpretation} />

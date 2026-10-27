@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <title>Neon 国内网络连通性测试</title>
+    <style>
+      :root {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #f4f7f2;
+        background: #080b0a;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: max(28px, env(safe-area-inset-top)) 18px max(30px, env(safe-area-inset-bottom));
+        background:
+          radial-gradient(circle at 50% -12%, rgba(0, 229, 153, .18), transparent 38%),
+          #080b0a;
+      }
+      main { width: min(100%, 520px); margin: 0 auto; }
+      .eyebrow { color: #6cf4bc; font-size: 12px; letter-spacing: .16em; font-weight: 700; }
+      h1 { margin: 10px 0 8px; font-size: clamp(28px, 8vw, 42px); line-height: 1.08; letter-spacing: -.04em; }
+      .intro { margin: 0 0 24px; color: #9fa9a4; font-size: 14px; line-height: 1.65; }
+      .summary, .test, .meta, .note {
+        border: 1px solid #242b28;
+        background: rgba(17, 22, 20, .88);
+        border-radius: 18px;
+      }
+      .summary { padding: 20px; margin-bottom: 12px; }
+      .summary-row { display: flex; align-items: center; gap: 12px; }
+      .pulse { width: 12px; height: 12px; border-radius: 50%; background: #82908a; box-shadow: 0 0 0 7px rgba(130, 144, 138, .1); }
+      .pulse.testing { background: #f3c969; animation: pulse 1.2s infinite; }
+      .pulse.success { background: #35e59b; box-shadow: 0 0 0 7px rgba(53, 229, 155, .12); }
+      .pulse.partial { background: #f3c969; }
+      .pulse.failed { background: #ff6b76; }
+      @keyframes pulse { 50% { opacity: .35; } }
+      #summaryTitle { font-size: 18px; font-weight: 750; }
+      #summaryText { margin: 5px 0 0 24px; color: #9fa9a4; font-size: 13px; }
+      .tests { display: grid; gap: 10px; }
+      .test { padding: 16px 17px; display: flex; justify-content: space-between; align-items: center; gap: 14px; }
+      .test-name { font-weight: 680; font-size: 15px; }
+      .test-desc { margin-top: 4px; color: #7f8a85; font-size: 12px; }
+      .status { flex: 0 0 auto; border-radius: 999px; padding: 7px 10px; background: #202724; color: #aab3af; font-size: 12px; font-variant-numeric: tabular-nums; }
+      .status.success { color: #6cf4bc; background: rgba(53, 229, 155, .1); }
+      .status.failed { color: #ff8b93; background: rgba(255, 107, 118, .1); }
+      .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 0; }
+      button {
+        appearance: none; border: 0; border-radius: 14px; padding: 14px 12px;
+        font: inherit; font-weight: 700; cursor: pointer;
+      }
+      #rerun { background: #6cf4bc; color: #07100c; }
+      #copy { color: #eef4f1; background: #202724; }
+      button:disabled { opacity: .45; cursor: wait; }
+      .meta { padding: 14px 16px; color: #8c9691; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+      .note { margin-top: 12px; padding: 14px 16px; color: #909b96; font-size: 12px; line-height: 1.65; }
+      .note strong { color: #d9e1dd; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="eyebrow">WECHAT · CHINA NETWORK CHECK</div>
+      <h1>Neon 网络测试</h1>
+      <p class="intro">请在微信内打开此页面。测试会从你当前的手机网络直接访问 Neon，不会读取或保存个人数据。</p>
+
+      <section class="summary">
+        <div class="summary-row">
+          <span id="pulse" class="pulse testing"></span>
+          <span id="summaryTitle">正在检测…</span>
+        </div>
+        <p id="summaryText">通常在几秒内完成</p>
+      </section>
+
+      <section class="tests" id="tests"></section>
+
+      <div class="actions">
+        <button id="rerun" type="button">重新测试</button>
+        <button id="copy" type="button">复制结果</button>
+      </div>
+
+      <section class="meta" id="meta"></section>
+      <section class="note">
+        <strong>结果说明：</strong>此页验证微信是否能访问 Neon 的公开 HTTPS 服务。全部通过表示网络基本可用；真实 PostgreSQL 读写仍需创建 Neon 项目后再验证。
+      </section>
+    </main>
+
+    <script>
+      const targets = [
+        { name: 'Neon 官网', desc: 'neon.com', url: 'https://neon.com/favicon.ico' },
+        { name: 'Neon 控制台', desc: 'console.neon.tech', url: 'https://console.neon.tech/favicon.ico' },
+        { name: 'Neon API', desc: 'console.neon.tech/api/v2', url: 'https://console.neon.tech/api/v2/projects' },
+      ];
+
+      const testsEl = document.querySelector('#tests');
+      const pulseEl = document.querySelector('#pulse');
+      const summaryTitleEl = document.querySelector('#summaryTitle');
+      const summaryTextEl = document.querySelector('#summaryText');
+      const rerunEl = document.querySelector('#rerun');
+      const copyEl = document.querySelector('#copy');
+      const metaEl = document.querySelector('#meta');
+      let latestResults = [];
+
+      function renderRows() {
+        testsEl.innerHTML = targets.map((target, index) => `
+          <article class="test">
+            <div><div class="test-name">${target.name}</div><div class="test-desc">${target.desc}</div></div>
+            <span class="status" id="status-${index}">等待中</span>
+          </article>`).join('');
+      }
+
+      async function probe(target) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+        const started = performance.now();
+        try {
+          await fetch(`${target.url}${target.url.includes('?') ? '&' : '?'}t=${Date.now()}`, {
+            mode: 'no-cors', cache: 'no-store', signal: controller.signal,
+          });
+          return { ...target, ok: true, ms: Math.round(performance.now() - started) };
+        } catch (error) {
+          return { ...target, ok: false, ms: Math.round(performance.now() - started), error: error.name };
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+
+      async function runTests() {
+        rerunEl.disabled = true;
+        latestResults = [];
+        pulseEl.className = 'pulse testing';
+        summaryTitleEl.textContent = '正在检测…';
+        summaryTextEl.textContent = '正在从当前微信网络连接 Neon';
+        targets.forEach((_, index) => {
+          const status = document.querySelector(`#status-${index}`);
+          status.className = 'status';
+          status.textContent = '连接中';
+        });
+
+        const results = await Promise.all(targets.map(probe));
+        latestResults = results;
+        results.forEach((result, index) => {
+          const status = document.querySelector(`#status-${index}`);
+          status.className = `status ${result.ok ? 'success' : 'failed'}`;
+          status.textContent = result.ok ? `可访问 · ${result.ms}ms` : '不可达 / 超时';
+        });
+
+        const passed = results.filter((result) => result.ok).length;
+        if (passed === results.length) {
+          pulseEl.className = 'pulse success';
+          summaryTitleEl.textContent = 'Neon 网络可以访问';
+          summaryTextEl.textContent = `${passed}/${results.length} 项通过，可以继续做真实数据库测试`;
+        } else if (passed > 0) {
+          pulseEl.className = 'pulse partial';
+          summaryTitleEl.textContent = '部分服务可以访问';
+          summaryTextEl.textContent = `${passed}/${results.length} 项通过，建议切换 Wi-Fi/流量后重试`;
+        } else {
+          pulseEl.className = 'pulse failed';
+          summaryTitleEl.textContent = '当前网络无法访问 Neon';
+          summaryTextEl.textContent = '0 项通过，请切换网络后重新测试';
+        }
+        rerunEl.disabled = false;
+        updateMeta();
+      }
+
+      function updateMeta() {
+        const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+        const network = connection ? [connection.effectiveType, connection.downlink ? `${connection.downlink}Mbps` : ''].filter(Boolean).join(' · ') : '浏览器未提供';
+        metaEl.textContent = `测试时间：${new Date().toLocaleString('zh-CN')}\n网络信息：${network}\n浏览器：${navigator.userAgent}`;
+        metaEl.style.whiteSpace = 'pre-wrap';
+      }
+
+      function resultText() {
+        const lines = latestResults.map((result) => `${result.name}：${result.ok ? `可访问（${result.ms}ms）` : '不可达/超时'}`);
+        return [`Neon 微信网络测试`, `时间：${new Date().toLocaleString('zh-CN')}`, ...lines, `浏览器：${navigator.userAgent}`].join('\n');
+      }
+
+      rerunEl.addEventListener('click', runTests);
+      copyEl.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(resultText());
+          copyEl.textContent = '已复制';
+        } catch {
+          const area = document.createElement('textarea');
+          area.value = resultText(); document.body.appendChild(area); area.select();
+          document.execCommand('copy'); area.remove(); copyEl.textContent = '已复制';
+        }
+        setTimeout(() => { copyEl.textContent = '复制结果'; }, 1600);
+      });
+
+      renderRows();
+      updateMeta();
+      runTests();
+    </script>
+  </body>
+</html>

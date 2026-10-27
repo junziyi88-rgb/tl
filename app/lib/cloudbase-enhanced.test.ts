@@ -35,6 +35,7 @@ describe('enhanced CloudBase contract', () => {
       '时间之流',
       '一张牌',
       '探索',
+      '二选一抉择',
       '维纳斯之爱',
       '爱的解答',
       '心之声',
@@ -110,16 +111,28 @@ describe('enhanced CloudBase contract', () => {
     ])
       expect((api as any)[name]).toBeTypeOf('function');
   });
-  it('uses the public CloudBase HTTP function instead of the blocked Web SDK function call', () => {
+  it('uses Alibaba Supabase tables for data and calls DeepSeek directly from the browser', () => {
     const source = readFileSync(
       new URL('./cloudbase-api.ts', import.meta.url),
       'utf8',
     );
-    expect(source).toContain('.service.tcloudbase.com/api/tarot-ai');
-    expect(source).toContain('fetch(AI_ENDPOINT');
+    expect(source).toContain('VITE_SUPABASE_URL');
+    expect(source).toContain('VITE_SUPABASE_ANON_KEY');
+    expect(source).toContain('VITE_DEEPSEEK_API_KEY');
+    expect(source).toContain('requestDeepSeekInterpretation');
+    expect(source).not.toContain('VITE_AI_API_URL');
+    expect(source).not.toContain('/rest/v1/rpc/');
+    expect(source).toContain('/rest/v1/readings');
+    expect(source).toContain('/rest/v1/custom_spreads');
+    expect(source).toContain('/rest/v1/reading_feed');
+    expect(source).not.toContain('/functions/v1/tarot-ai');
+    expect(source).toContain("'content-type': 'application/json'");
+    expect(source).not.toContain('neon.tech');
+    expect(source).not.toContain('chatgpt.site');
+    expect(source).not.toContain('service.tcloudbase.com');
     expect(source).not.toContain("callFunction({ name: 'tarot-ai'");
   });
-  it('ships an additive RLS migration and function metadata', () => {
+  it('keeps Tencent CloudBase as static hosting only', () => {
     const path = new URL(
       '../cloudbase/migrations/20260914000000_enhanced_tarot.sql',
       import.meta.url,
@@ -136,12 +149,13 @@ describe('enhanced CloudBase contract', () => {
     const config = JSON.parse(
       readFileSync(new URL('../cloudbaserc.json', import.meta.url), 'utf8'),
     );
-    expect(config.functionRoot).toBe('./functions');
-    expect(config.functions[0].name).toBe('tarot-ai');
-    expect(config.functions[0]).toMatchObject({
-      type: 'HTTP',
-      public: true,
-      gatewayPath: '/api/tarot-ai',
+    expect(config).not.toHaveProperty('functionRoot');
+    expect(config).not.toHaveProperty('functions');
+    expect(config).not.toHaveProperty('database');
+    expect(config.hosting[0]).toMatchObject({
+      framework: 'vite',
+      outputDir: 'dist',
+      deployPath: '/',
     });
   });
   it('uses 后续反馈 in the Vite metadata', () => {

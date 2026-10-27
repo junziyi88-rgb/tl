@@ -6,3 +6,12 @@ data/*.tmp
 .env
 playwright-report/
 test-results/
+
+# Local orchestration and deployment archives
+.superpowers/
+tarot-site.tar.gz
+
+# Local browser profiles and login captures
+.chrome-debug-ai/
+.chrome-headless-test/
+feishu-login.png

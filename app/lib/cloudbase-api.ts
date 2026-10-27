@@ -10,10 +10,21 @@ import {
   type SpreadDefinition,
 } from '@/lib/tarot';
 import { validateDrawRequest, validateReading } from './server';
+import { requestDeepSeekInterpretation } from './deepseek-browser';
 
 export const CLOUDBASE_ENV_ID = 'gongjian-tarot-d2geleaahb9b8605e';
-export const AI_ENDPOINT =
-  'https://gongjian-tarot-d2geleaahb9b8605e.service.tcloudbase.com/api/tarot-ai';
+export const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL ?? '').replace(
+  /\/+$/,
+  '',
+);
+export const SUPABASE_ANON_KEY =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
+// The owner intentionally accepts that this small-balance key is public in the
+// static browser bundle. Do not use a valuable or unrestricted key here.
+export const DEEPSEEK_API_KEY =
+  import.meta.env.VITE_DEEPSEEK_API_KEY ?? '';
+
+const SESSION_KEY = 'gongjian-tarot-cloudbase-session-v1';
 
 type CloudbaseError = { message?: string } | null;
 export type CloudbaseUser = { id: string };
@@ -24,26 +35,6 @@ export type CloudbaseAuth = {
     CloudbaseResult<{ session?: { user?: CloudbaseUser } }>
   >;
   signInAnonymously(): Promise<CloudbaseResult<{ user?: CloudbaseUser }>>;
-};
-
-type QueryResult<T> = PromiseLike<CloudbaseResult<T>>;
-type QueryBuilder<T> = QueryResult<T> & {
-  eq(column: string, value: unknown): QueryBuilder<T>;
-  limit(count: number): QueryBuilder<T>;
-  order(column: string, options: { ascending: boolean }): QueryBuilder<T>;
-  select(columns?: string): QueryBuilder<T>;
-};
-
-type TableBuilder<T> = {
-  delete(): QueryBuilder<T[]>;
-  insert(values: Record<string, unknown>): QueryBuilder<T[]>;
-  select(columns?: string): QueryBuilder<T[]>;
-  update(values: Record<string, unknown>): QueryBuilder<T[]>;
-};
-
-type CloudbaseApp = {
-  auth: CloudbaseAuth;
-  rdb(): { from<T = CloudbaseRow>(table: string): TableBuilder<T> };
 };
 
 export type MemberSession = {
@@ -82,19 +73,6 @@ export type CloudbaseRow = {
   updated_at: string | Date;
 };
 
-let appPromise: Promise<CloudbaseApp> | undefined;
-
-async function getApp() {
-  appPromise ??= import('@cloudbase/js-sdk').then(
-    ({ default: cloudbase }) =>
-      cloudbase.init({
-        env: CLOUDBASE_ENV_ID,
-        region: 'ap-shanghai',
-      }) as unknown as CloudbaseApp,
-  );
-  return appPromise;
-}
-
 function errorMessage(error: CloudbaseError, fallback: string) {
   if (!error) return;
   throw new Error(error.message?.trim() || fallback);
@@ -119,10 +97,126 @@ export async function resolveAnonymousUser(auth: CloudbaseAuth) {
   return user;
 }
 
-async function ensureAnonymousSession() {
-  const app = await getApp();
-  const user = await resolveAnonymousUser(app.auth);
-  return { app, user };
+function isUuid(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      value,
+    )
+  );
+}
+
+function readLocalSession(): MemberSession | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const value = JSON.parse(
+      localStorage.getItem(SESSION_KEY) || 'null',
+    ) as Partial<MemberSession> | null;
+    if (
+      value &&
+      isUuid(value.memberId) &&
+      typeof value.nickname === 'string' &&
+      typeof value.token === 'string' &&
+      value.token.length >= 32
+    ) {
+      return value as MemberSession;
+    }
+  } catch {
+    // Old CloudBase sessions are replaced with a local portable identity.
+  }
+  return null;
+}
+
+function newLocalSession(nickname: string): MemberSession {
+  return {
+    memberId: crypto.randomUUID(),
+    nickname,
+    token: `${crypto.randomUUID()}${crypto.randomUUID()}`,
+  };
+}
+
+function requireLocalSession() {
+  const session = readLocalSession();
+  if (!session) throw new Error('成员身份已失效，请重新输入昵称');
+  return session;
+}
+
+const READING_COLUMNS = [
+  'id',
+  'owner_id',
+  'author_name',
+  'question',
+  'mode',
+  'spread',
+  'spread_data',
+  'cards',
+  'interpretation',
+  'ai_interpretation',
+  'tags',
+  'feedback',
+  'created_at',
+  'updated_at',
+].join(',');
+
+const SPREAD_COLUMNS = 'id,name,positions,created_at,updated_at';
+
+async function parseSupabaseResponse<T>(
+  response: Response,
+  fallback: string,
+): Promise<T | null> {
+  const text = await response.text();
+  const result = text
+    ? parseObject<T & { message?: string }>(text)
+    : null;
+  if (!response.ok) {
+    throw new Error(result?.message || fallback);
+  }
+  return result as T | null;
+}
+
+function requireFirstRow<T>(rows: T[] | null, message: string): T {
+  const row = rows?.[0];
+  if (!row) throw new Error(message);
+  return row;
+}
+
+function assertSupabaseConfigured() {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('数据库尚未配置，请稍后重试');
+  }
+}
+
+export function buildOwnerRequestHeaders(session: MemberSession) {
+  return {
+    'x-owner-id': session.memberId,
+    'x-owner-token': session.token,
+  };
+}
+
+function supabaseHeaders(session?: MemberSession) {
+  return {
+    apikey: SUPABASE_ANON_KEY,
+    authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    'content-type': 'application/json',
+    ...(session ? buildOwnerRequestHeaders(session) : {}),
+  };
+}
+
+async function selectReadingFeed() {
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/reading_feed?select=*&order=created_at.desc&limit=300`,
+    {
+      headers: supabaseHeaders(),
+    },
+  );
+  const result = parseObject<CloudbaseRow[] & { message?: string }>(
+    await response.text(),
+  );
+  if (!response.ok) {
+    throw new Error(result?.message || '数据库暂时不可用，请稍后重试');
+  }
+  return Array.isArray(result) ? result : [];
 }
 
 function parseArray<T>(value: T[] | string): T[] {
@@ -262,8 +356,10 @@ export async function createMember(nickname: string): Promise<MemberSession> {
   if (!cleanNickname || cleanNickname.length > 24) {
     throw new Error('昵称需要在 1—24 个字之间');
   }
-  const { user } = await ensureAnonymousSession();
-  return { memberId: user.id, nickname: cleanNickname, token: '' };
+  const current = readLocalSession();
+  return current
+    ? { ...current, nickname: cleanNickname }
+    : newLocalSession(cleanNickname);
 }
 
 export async function updateMemberNickname(
@@ -273,60 +369,53 @@ export async function updateMemberNickname(
   if (!cleanNickname || cleanNickname.length > 24) {
     throw new Error('昵称需要在 1—24 个字之间');
   }
-  const { app, user } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from('readings')
-    .update({
-      author_name: cleanNickname,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('owner_id', user.id);
-  errorMessage(result.error, '更新历史记录昵称失败');
-  return { memberId: user.id, nickname: cleanNickname, token: '' };
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/readings?owner_id=eq.${encodeURIComponent(session.memberId)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=minimal',
+      },
+      body: JSON.stringify({
+        author_name: cleanNickname,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  await parseSupabaseResponse<never>(response, '昵称修改失败');
+  return { ...session, nickname: cleanNickname };
 }
 
 export async function listReadings(): Promise<Reading[]> {
-  const { app } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from('readings')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(300);
-  errorMessage(result.error, '读取记录失败');
-  return (result.data ?? []).map(mapReadingRow);
-}
-
-async function findReadingBy(column: string, value: unknown) {
-  const { app } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from('readings')
-    .select('*')
-    .eq(column, value)
-    .limit(1);
-  errorMessage(result.error, '读取记录失败');
-  const row = result.data?.[0];
-  return row ? mapReadingRow(row) : null;
+  const rows = await selectReadingFeed();
+  return (rows ?? []).map(mapReadingRow);
 }
 
 export async function createReading(input: NewReading): Promise<Reading> {
-  const { app, user } = await ensureAnonymousSession();
-  if (user.id !== input.memberId)
+  const session = requireLocalSession();
+  if (session.memberId !== input.memberId)
     throw new Error('成员身份已失效，请重新输入昵称');
-
-  const existing = await findReadingBy('idempotency_key', input.idempotencyKey);
-  if (existing) return existing;
-
-  const result = await app
-    .rdb()
-    .from('readings')
-    .insert(toReadingRow(input))
-    .select('*');
-  errorMessage(result.error, '发布记录失败');
-  const row = result.data?.[0];
-  if (!row) throw new Error('发布记录失败，请稍后重试');
+  const value = toReadingRow(input);
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/readings?select=${READING_COLUMNS}`,
+    {
+      method: 'POST',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=representation',
+      },
+      body: JSON.stringify(value),
+    },
+  );
+  const rows = await parseSupabaseResponse<CloudbaseRow[]>(
+    response,
+    '发布记录失败，请稍后重试',
+  );
+  const row = requireFirstRow(rows, '发布记录失败，请稍后重试');
   return mapReadingRow(row);
 }
 
@@ -334,25 +423,44 @@ export async function updateFeedback(
   id: string,
   feedback: string,
 ): Promise<Reading> {
-  const { app } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from('readings')
-    .update({
-      feedback: normalizeFeedback(feedback),
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id);
-  errorMessage(result.error, '保存反馈失败');
-  const updated = await findReadingBy('id', id);
-  if (!updated) throw new Error('没有找到这条记录');
-  return updated;
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/readings?id=eq.${encodeURIComponent(id)}&select=${READING_COLUMNS}`,
+    {
+      method: 'PATCH',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        feedback: normalizeFeedback(feedback),
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  const rows = await parseSupabaseResponse<CloudbaseRow[]>(
+    response,
+    '保存反馈失败',
+  );
+  const row = requireFirstRow(rows, '没有找到这条记录');
+  return mapReadingRow(row);
 }
 
 export async function deleteReading(id: string) {
-  const { app } = await ensureAnonymousSession();
-  const result = await app.rdb().from('readings').delete().eq('id', id);
-  errorMessage(result.error, '删除记录失败');
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/readings?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=minimal',
+      },
+    },
+  );
+  await parseSupabaseResponse<never>(response, '删除记录失败');
   return { ok: true };
 }
 
@@ -383,41 +491,47 @@ function mapSpreadRow(row: SpreadRow): CustomSpread {
   };
 }
 export async function listCustomSpreads(): Promise<CustomSpread[]> {
-  const { app, user } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from<SpreadRow>('custom_spreads')
-    .select('*')
-    .eq('owner_id', user.id)
-    .order('updated_at', { ascending: false });
-  errorMessage(result.error, '读取我的牌阵失败');
-  return (result.data ?? []).map(mapSpreadRow);
+  const session = readLocalSession();
+  if (!session) return [];
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/custom_spreads?select=${SPREAD_COLUMNS}&order=updated_at.desc`,
+    { headers: supabaseHeaders(session) },
+  );
+  const rows = await parseSupabaseResponse<SpreadRow[]>(
+    response,
+    '读取我的牌阵失败',
+  );
+  return (rows ?? []).map(mapSpreadRow);
 }
 export async function createCustomSpread(
   spread: SpreadDefinition,
 ): Promise<CustomSpread> {
   const checked = validateSpread(spread);
   if (!checked.ok) throw new Error(checked.error);
-  const { app, user } = await ensureAnonymousSession();
-  const table = app.rdb().from<SpreadRow>('custom_spreads');
-  // The draft's stable ID makes a retried “save both” safe after a partial network failure.
-  const existing = await table
-    .select('*')
-    .eq('id', checked.value.id)
-    .eq('owner_id', user.id)
-    .limit(1);
-  errorMessage(existing.error, '读取我的牌阵失败');
-  if (existing.data?.[0]) return mapSpreadRow(existing.data[0]);
-  const result = await table
-    .insert({
-      id: checked.value.id,
-      name: checked.value.name,
-      positions: checked.value.positions,
-    })
-    .select('*');
-  errorMessage(result.error, '保存牌阵失败');
-  if (!result.data?.[0]) throw new Error('保存牌阵失败，请重试');
-  return mapSpreadRow(result.data[0]);
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/custom_spreads?select=${SPREAD_COLUMNS}`,
+    {
+      method: 'POST',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        id: checked.value.id,
+        name: checked.value.name,
+        positions: checked.value.positions,
+      }),
+    },
+  );
+  const rows = await parseSupabaseResponse<SpreadRow[]>(
+    response,
+    '保存牌阵失败，请重试',
+  );
+  const row = requireFirstRow(rows, '保存牌阵失败，请重试');
+  return mapSpreadRow(row);
 }
 export async function updateCustomSpread(
   id: string,
@@ -425,31 +539,44 @@ export async function updateCustomSpread(
 ): Promise<CustomSpread> {
   const checked = validateSpread(spread);
   if (!checked.ok) throw new Error(checked.error);
-  const { app, user } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from<SpreadRow>('custom_spreads')
-    .update({
-      name: checked.value.name,
-      positions: checked.value.positions,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', id)
-    .eq('owner_id', user.id)
-    .select('*');
-  errorMessage(result.error, '修改牌阵失败');
-  if (!result.data?.[0]) throw new Error('牌阵不存在或不属于当前身份');
-  return mapSpreadRow(result.data[0]);
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/custom_spreads?id=eq.${encodeURIComponent(id)}&select=${SPREAD_COLUMNS}`,
+    {
+      method: 'PATCH',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=representation',
+      },
+      body: JSON.stringify({
+        name: checked.value.name,
+        positions: checked.value.positions,
+        updated_at: new Date().toISOString(),
+      }),
+    },
+  );
+  const rows = await parseSupabaseResponse<SpreadRow[]>(
+    response,
+    '修改牌阵失败',
+  );
+  const row = requireFirstRow(rows, '牌阵不存在或不属于当前身份');
+  return mapSpreadRow(row);
 }
 export async function deleteCustomSpread(id: string) {
-  const { app, user } = await ensureAnonymousSession();
-  const result = await app
-    .rdb()
-    .from<SpreadRow>('custom_spreads')
-    .delete()
-    .eq('id', id)
-    .eq('owner_id', user.id);
-  errorMessage(result.error, '删除牌阵失败');
+  const session = requireLocalSession();
+  assertSupabaseConfigured();
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/custom_spreads?id=eq.${encodeURIComponent(id)}`,
+    {
+      method: 'DELETE',
+      headers: {
+        ...supabaseHeaders(session),
+        prefer: 'return=minimal',
+      },
+    },
+  );
+  await parseSupabaseResponse<never>(response, '删除牌阵失败');
 }
 export async function generateInterpretation(input: {
   question: string;
@@ -458,19 +585,7 @@ export async function generateInterpretation(input: {
   draftId: string;
 }): Promise<AiInterpretation> {
   try {
-    const response = await fetch(AI_ENDPOINT, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(input),
-    });
-    const result = parseObject<{
-      interpretation?: AiInterpretation;
-      error?: string;
-    }>(await response.text());
-    if (result?.error) throw new Error(result.error);
-    if (!response.ok) throw new Error('AI 服务暂时不可用，请稍后重试');
-    if (!result?.interpretation) throw new Error('AI 返回格式有误，请重试');
-    return result.interpretation;
+    return await requestDeepSeekInterpretation(input, DEEPSEEK_API_KEY);
   } catch (error) {
     if (error instanceof Error && /[\u4e00-\u9fff]/.test(error.message))
       throw error;

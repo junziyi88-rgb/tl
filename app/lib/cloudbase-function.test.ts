@@ -10,16 +10,6 @@ const functionPath = new URL(
 describe('CloudBase AI event function', () => {
   it('provides a deployable, isolated handler', () =>
     expect(existsSync(functionPath)).toBe(true));
-  it('contains the CloudBase web-function bootstrap', () => {
-    expect(
-      existsSync(
-        new URL('../functions/tarot-ai/scf_bootstrap', import.meta.url),
-      ),
-    ).toBe(true);
-    expect(
-      existsSync(new URL('../functions/tarot-ai/server.js', import.meta.url)),
-    ).toBe(true);
-  });
   it('validates JSON strictly, orders card output, and hides provider errors', async () => {
     expect(existsSync(functionPath)).toBe(true);
     if (!existsSync(functionPath)) return;
@@ -57,35 +47,5 @@ describe('CloudBase AI event function', () => {
     expect(await handler({})).toMatchObject({
       error: expect.stringMatching(/[\u4e00-\u9fff]/),
     });
-  });
-
-  it('exposes the same handler through a POST-only HTTP response', async () => {
-    const entryPath = new URL(
-      '../functions/tarot-ai/index.js',
-      import.meta.url,
-    );
-    const { createHttpHandler } = require(
-      entryPath.pathname.replace(/^\/(?:([A-Z]:))/, '$1'),
-    );
-    const response = await createHttpHandler(async (input: unknown) => ({
-      received: input,
-    }))({
-      httpMethod: 'POST',
-      body: JSON.stringify({ question: '测试问题' }),
-      isBase64Encoded: false,
-    });
-
-    expect(response).toMatchObject({
-      statusCode: 200,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    });
-    expect(JSON.parse(response.body)).toEqual({
-      received: { question: '测试问题' },
-    });
-
-    const rejected = await createHttpHandler(async () => ({}))({
-      httpMethod: 'GET',
-    });
-    expect(rejected.statusCode).toBe(405);
   });
 });
